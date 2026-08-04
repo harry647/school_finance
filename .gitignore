@@ -1,0 +1,30 @@
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller build artifacts
+dist/
+build/
+*.spec
+
+# Application runtime data — keep folder structure via .gitkeep
+school_finance/data/*.db
+school_finance/data/*.log
+school_finance/data/*.json
+school_finance/receipts/*.pdf
+school_finance/statements/*.pdf
+school_finance/backups/*.db
+school_finance/window_geometry.json
+
+# Build tools/dependencies (downloaded by build_windows.bat)
+school_finance/vcredist/
+
+# OS / IDE junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

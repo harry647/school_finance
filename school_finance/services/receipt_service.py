@@ -1,0 +1,703 @@
+"""Generate a PDF receipt for a single payment.
+
+Visual design:
+  - Accent color (#185FA5) for the receipt bar, section rules, and balance line.
+  - Colored status badge (PAID / PARTIAL / BALANCE DUE) computed from balance.
+  - Shaded panels behind Student Information and the amounts block.
+  - QR code encoding the receipt number for authenticity.
+  - Consistent vertical rhythm via PAD_XS / PAD_SM / PAD_MD / PAD_LG constants.
+
+Robustness:
+  - Header text is wrapped with c.stringWidth() instead of one fixed line.
+  - payment_details footer keeps the true first N lines in original order.
+  - datetime.strptime is guarded with try/except, falling back to the raw string.
+  - receipt_no is sanitized before being used as a filename.
+  - Header box height is computed from what is actually populated.
+
+Nice-to-have:
+  - DUPLICATE watermark when a receipt is reprinted (print_count > 1).
+"""
+import os
+import datetime
+
+from reportlab.lib.pagesizes import A5
+from reportlab.lib.units import mm
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+
+from db.database import get_connection, BASE_DIR
+from models.school import get_school_info
+from models.term import get_term
+from models.fee_structure import get_fee
+from models.student import get_balance, get_term_balance
+
+RECEIPTS_DIR = os.path.join(BASE_DIR, "receipts")
+
+# --- Spacing constants (consistent vertical rhythm) ---
+PAD_XS = 2 * mm
+PAD_SM = 4 * mm
+PAD_MD = 6 * mm
+PAD_LG = 10 * mm
+
+# --- Color palette ---
+ACCENT = colors.HexColor("#185FA5")           # deep blue accent
+ACCENT_LIGHT = colors.HexColor("#E8F0F8")      # light tint for bar fills
+PANEL_BG = colors.HexColor("#F5F5F5")          # light gray for shaded panels
+PANEL_BORDER = colors.HexColor("#CCCCCC")
+TEXT_DARK = colors.black
+TEXT_MUTED = colors.HexColor("#666666")
+STATUS_COLORS = {
+    "PAID": colors.HexColor("#2E7D32"),          # green
+    "PARTIAL": colors.HexColor("#F57C00"),       # amber
+    "BALANCE DUE": colors.HexColor("#C62828"),   # red
+}
+
+
+def _sanitize_filename(name):
+    """Strip to alnum + hyphens/underscores for safe filenames."""
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in "-_").strip()
+    return safe or "receipt"
+
+
+def _wrap_text(c, text, font, size, max_width):
+    """Wrap *text* into lines that each fit within *max_width*."""
+    words = text.split()
+    if not words:
+        return []
+    lines = []
+    current = ""
+    for word in words:
+        test = f"{current} {word}".strip()
+        if c.stringWidth(test, font, size) <= max_width:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _draw_shaded_panel(c, x, y, w, h, fill_color=PANEL_BG):
+    """Draw a shaded panel with a light fill and thin border."""
+    c.saveState()
+    c.setFillColor(fill_color)
+    c.setStrokeColor(PANEL_BORDER)
+    c.setLineWidth(0.5)
+    c.rect(x, y, w, h, fill=1, stroke=1)
+    c.restoreState()
+
+
+def _draw_accent_rule(c, x1, y, x2, color=ACCENT, width=1.2):
+    """Draw a horizontal rule in the accent color."""
+    c.saveState()
+    c.setStrokeColor(color)
+    c.setLineWidth(width)
+    c.line(x1, y, x2, y)
+    c.restoreState()
+
+
+def _draw_status_badge(c, x, y, status, width=28 * mm, height=6 * mm):
+    """Draw a colored status badge as a filled rounded rectangle with white text."""
+    color = STATUS_COLORS.get(status, colors.grey)
+    c.saveState()
+    c.setFillColor(color)
+    c.setStrokeColor(color)
+    c.roundRect(x, y, width, height, 2 * mm, fill=1, stroke=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 8)
+    c.drawCentredString(x + width / 2, y + 1.8 * mm, status)
+    c.restoreState()
+
+
+def _compute_status(balance_after, total_fee):
+    """Compute payment status label from balance and total fee."""
+    if balance_after <= 0:
+        return "PAID"
+    if total_fee > 0 and balance_after >= total_fee:
+        return "BALANCE DUE"
+    return "PARTIAL"
+
+
+def _draw_qr_code(c, data, x, y, size=16 * mm):
+    """Draw a QR code at (*x*, *y*).  Returns True on success."""
+    try:
+        from reportlab.graphics.barcode.qr import QrCodeWidget
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics import renderPDF
+
+        qr = QrCodeWidget(data)
+        bounds = qr.getBounds()
+        w = bounds[2] - bounds[0]
+        h = bounds[3] - bounds[1]
+        d = Drawing(size, size, transform=[size / w, 0, 0, size / h, 0, 0])
+        d.add(qr)
+        renderPDF.draw(d, c, x, y)
+        return True
+    except Exception:
+        return False
+
+
+def _format_date(date_str):
+    """Parse a date string and return a human-readable format, with fallback."""
+    if not date_str:
+        return "N/A"
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.datetime.strptime(date_str, fmt)
+            return dt.strftime("%d %B %Y")
+        except (ValueError, TypeError):
+            continue
+    return date_str
+
+
+def _draw_dashed_line(c, x1, y, x2):
+    """Draw a dashed horizontal line for tear-off separators."""
+    c.saveState()
+    c.setDash(2, 1)
+    c.setLineWidth(0.5)
+    c.setStrokeColor(colors.HexColor("#999999"))
+    c.line(x1, y, x2, y)
+    c.restoreState()
+
+
+def generate_receipt(payment_id, student, term_id, balance_after):
+    """Build a PDF receipt for a payment and log it in the receipts table."""
+    conn = get_connection()
+    payment = conn.execute(
+        "SELECT * FROM payments WHERE id = ?", (payment_id,)
+    ).fetchone()
+    if payment is None:
+        raise ValueError("Payment not found")
+
+    student = dict(student)
+    term = get_term(term_id) if term_id else None
+    term_name = term["term_name"] if term else "N/A"
+    year = term["year"] if term else datetime.datetime.now().year
+
+    info = get_school_info()
+    school_name = info.get("school_name") or "SCHOOL NAME HERE"
+    motto = info.get("motto") or ""
+    address = info.get("address") or ""
+    phone = info.get("phone") or ""
+    logo_path = info.get("logo_path") or ""
+    payment_details = info.get("payment_details") or ""
+
+    # --- Compute fee info (gross / waiver / net) ---
+    fee = get_fee(student["grade"], term_id) if term_id else None
+    current_term_gross = fee["amount"] if fee else 0.0
+    if current_term_gross == 0.0:
+        current_term_gross = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM charges WHERE student_id = ?"
+            + (" AND term_id = ?" if term_id else ""),
+            ((payment["student_id"], term_id) if term_id else (payment["student_id"],)),
+        ).fetchone()["total"]
+
+    # Partial waiver total for this term (sum of active, non-revoked waivers)
+    current_term_waiver = 0.0
+    if term_id:
+        wrow = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM waivers "
+            "WHERE student_id = ? AND term_id = ? AND revoked_at IS NULL",
+            (payment["student_id"], term_id),
+        ).fetchone()
+        current_term_waiver = wrow["total"] if wrow else 0.0
+
+    current_term_net = round(current_term_gross - current_term_waiver, 2)
+
+    previous_balance = 0.0
+    if term_id:
+        previous_balance = (
+            get_balance(payment["student_id"])
+            - get_term_balance(payment["student_id"], term_id)
+        )
+        if previous_balance < 0:
+            previous_balance = 0.0
+        # previous_balance is computed AFTER the payment has been applied
+        # (generate_receipt runs after add_payment), so it already reflects
+        # the FIFO allocation of this payment.  Add back the portion of this
+        # payment that was applied to previous-term charges so that
+        # previous_balance shows the amount owed BEFORE this payment.
+        current_term_alloc = conn.execute(
+            "SELECT COALESCE(SUM(pa.amount), 0) AS total FROM payment_allocations pa "
+            "JOIN charges c ON pa.charge_id = c.id "
+            "WHERE pa.payment_id = ? AND c.term_id = ?",
+            (payment_id, term_id),
+        ).fetchone()["total"]
+        alloc_to_previous = payment["amount"] - current_term_alloc
+        previous_balance += alloc_to_previous
+        if previous_balance < 0:
+            previous_balance = 0.0
+
+    # net_total is the true amount the student owes (gross minus waivers)
+    total_fee = current_term_net + previous_balance
+    # gross_total preserves the original required amount for display
+    gross_total = current_term_gross + previous_balance
+    status = _compute_status(balance_after, total_fee)
+
+    # --- Sanitize filename ---
+    safe_receipt_no = _sanitize_filename(payment["receipt_no"])
+    os.makedirs(RECEIPTS_DIR, exist_ok=True)
+    file_name = f"{safe_receipt_no}.pdf"
+    file_path = os.path.join(RECEIPTS_DIR, file_name)
+
+    # --- Check for reprint (print_count tracking) ---
+    existing_receipt = conn.execute(
+        "SELECT print_count FROM receipts WHERE receipt_no = ?",
+        (payment["receipt_no"],),
+    ).fetchone()
+    is_reprint = existing_receipt is not None
+    if is_reprint:
+        print_count = (existing_receipt["print_count"] or 1) + 1
+    else:
+        print_count = 1
+
+    # --- Build PDF ---
+    c = canvas.Canvas(file_path, pagesize=A5)
+    width, height = A5
+
+    margin = 12 * mm
+    x = margin
+    w = width - 2 * margin
+    y = height - margin  # cursor moving downward
+
+    # ================================================================
+    # DUPLICATE WATERMARK (behind everything, only for reprints)
+    # ================================================================
+    if print_count > 1:
+        c.saveState()
+        c.translate(width / 2, height / 2)
+        c.rotate(35)
+        c.setFillColor(colors.HexColor("#F0F0F0"))
+        c.setFont("Helvetica-Bold", 48)
+        c.drawCentredString(0, 0, "DUPLICATE")
+        c.restoreState()
+
+    # ================================================================
+    # HEADER SECTION (dynamic height based on populated fields)
+    # ================================================================
+    # Compute school name wrapping (needs canvas for stringWidth)
+    name_lines = _wrap_text(c, school_name, "Helvetica-Bold", 13, w - 10 * mm)
+    name_size = 13
+    if len(name_lines) > 2:
+        name_size = 11
+        while name_size > 9 and len(
+            _wrap_text(c, school_name, "Helvetica-Bold", name_size, w - 10 * mm)
+        ) > 2:
+            name_size -= 0.5
+        name_lines = _wrap_text(
+            c, school_name, "Helvetica-Bold", name_size, w - 10 * mm
+        )
+
+    # Compute header height: base (logo+name) + 5mm per optional field + padding
+    optional_count = sum(1 for f in (motto, address, phone) if f)
+    header_h = 30 * mm  # base: logo space + name
+    if len(name_lines) > 1:
+        header_h += 5 * mm  # extra line for wrapped name
+    header_h += optional_count * 5 * mm + PAD_SM
+
+    _draw_shaded_panel(c, x, y - header_h, w, header_h, fill_color=colors.white)
+
+    # Logo (centered at top)
+    logo_bottom = y
+    if logo_path and os.path.isfile(logo_path):
+        try:
+            img_w, img_h = ImageReader(logo_path).getSize()
+            max_w, max_h = 28 * mm, 20 * mm
+            scale = min(max_w / img_w, max_h / img_h)
+            draw_w, draw_h = img_w * scale, img_h * scale
+            mask = "auto" if logo_path.lower().endswith(".png") else None
+            c.drawImage(
+                logo_path,
+                (width - draw_w) / 2,
+                y - draw_h - 2 * mm,
+                draw_w,
+                draw_h,
+                mask=mask,
+            )
+            logo_bottom = y - draw_h - 2 * mm
+        except Exception:
+            pass
+
+    # School name (wrapped, centered)
+    text_y = logo_bottom - PAD_SM
+    c.setFont("Helvetica-Bold", name_size)
+    for line in name_lines[:2]:
+        c.drawCentredString(width / 2, text_y, line)
+        text_y -= 5 * mm
+
+    # Motto
+    if motto:
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawCentredString(width / 2, text_y, f'"{motto}"')
+        text_y -= 5 * mm
+
+    # Address (wrapped, centered)
+    if address:
+        addr_lines = _wrap_text(c, address, "Helvetica", 9, w - 10 * mm)
+        c.setFont("Helvetica", 9)
+        for line in addr_lines[:2]:
+            c.drawCentredString(width / 2, text_y, line)
+            text_y -= 4 * mm
+
+    # Phone
+    if phone:
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(width / 2, text_y, f"Tel: {phone}")
+
+    y -= header_h + PAD_SM
+
+    # ================================================================
+    # OFFICIAL RECEIPT BAR + STATUS BADGE
+    # ================================================================
+    bar_h = 10 * mm
+    # Accent-tinted fill with accent border
+    c.saveState()
+    c.setFillColor(ACCENT_LIGHT)
+    c.setStrokeColor(ACCENT)
+    c.setLineWidth(1.0)
+    c.rect(x, y - bar_h, w, bar_h, fill=1, stroke=1)
+    c.restoreState()
+    # Accent rules above and below the bar
+    _draw_accent_rule(c, x, y, x + w, color=ACCENT, width=1.5)
+    _draw_accent_rule(c, x, y - bar_h, x + w, color=ACCENT, width=1.5)
+
+    # Bar text (black for readability)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(width / 2, y - 7 * mm, "OFFICIAL SCHOOL RECEIPT")
+
+    # Status badge (right side of bar)
+    badge_w = 28 * mm
+    badge_h = 6 * mm
+    _draw_status_badge(
+        c,
+        x + w - badge_w - 3 * mm,
+        y - bar_h / 2 - badge_h / 2,
+        status,
+        width=badge_w,
+        height=badge_h,
+    )
+
+    y -= bar_h + PAD_SM
+
+    # ================================================================
+    # RECEIPT DETAILS (Receipt No, Date, Year, Term)
+    # ================================================================
+    date_str = _format_date(payment["date_paid"])
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x + 5 * mm, y - 5 * mm, f"Receipt No: {payment['receipt_no']}")
+    c.setFont("Helvetica", 10)
+    c.drawString(x + w * 0.55, y - 5 * mm, f"Date: {date_str}")
+    c.drawString(x + 5 * mm, y - 11 * mm, f"Academic Year: {year}")
+    c.drawString(x + w * 0.55, y - 11 * mm, f"Term: {term_name}")
+
+    y -= 13 * mm + PAD_SM
+
+    # ================================================================
+    # STUDENT INFORMATION PANEL (shaded)
+    # ================================================================
+    panel_h = 18 * mm
+    _draw_shaded_panel(c, x, y - panel_h, w, panel_h)
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(width / 2, y - 6 * mm, "STUDENT INFORMATION")
+
+    student_class = student["grade"]
+    if student.get("stream"):
+        student_class = f"{student['grade']} {student['stream']}"
+    c.setFont("Helvetica", 9)
+    c.drawString(x + 5 * mm, y - 12 * mm, f"Student Name: {student['full_name']}")
+    c.drawString(
+        x + 5 * mm, y - 16 * mm, f"Admission No: {student['admission_no'] or '-'}"
+    )
+    c.drawString(x + w * 0.55, y - 16 * mm, f"Class: {student_class}")
+
+    y -= panel_h + PAD_SM
+
+    # ================================================================
+    # PAYMENT METHOD
+    # ================================================================
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(
+        x + 5 * mm, y - 5 * mm, f"PAYMENT METHOD: {payment['method']}"
+    )
+    has_detail = False
+    if payment["method"] == "M-Pesa" and payment["mpesa_code"]:
+        c.drawString(
+            x + 5 * mm,
+            y - 11 * mm,
+            f"TRANSACTION CODE: {payment['mpesa_code']}",
+        )
+        has_detail = True
+    elif payment["method"] == "In-Kind" and payment["in_kind_desc"]:
+        c.drawString(
+            x + 5 * mm,
+            y - 11 * mm,
+            f"DESCRIPTION: {payment['in_kind_desc']}",
+        )
+        has_detail = True
+
+    y -= (11 * mm if has_detail else 5 * mm) + PAD_SM
+
+    # ================================================================
+    # AMOUNTS PANEL (shaded) — Balance is the visual focal point
+    # Layout:
+    #   Total Fee Required:        KSh X
+    #   Less: Fee Waiver:          KSh X   (if waiver exists)
+    #   Net Amount Due:            KSh X   (if waiver exists)
+    #     (Current Term: KSh X)            (if previous balance exists)
+    #     (Previous Balance: KSh X)        (if previous balance exists)
+    #   Amount Paid:               KSh X
+    #   BALANCE:                   KSh X
+    # ================================================================
+    amounts_lines = 3  # total, paid, balance
+    has_waiver = current_term_waiver > 0
+    if has_waiver:
+        amounts_lines += 2  # waiver line + net line
+    if previous_balance > 0:
+        amounts_lines += 2  # current term breakdown + previous balance
+    # 6mm per line + 8mm top padding + 8mm gap before balance + 5mm bottom
+    amounts_h = amounts_lines * 6 * mm + 9 * mm
+    _draw_shaded_panel(c, x, y - amounts_h, w, amounts_h)
+
+    line_h = 6 * mm
+    fee_y = y - 8 * mm
+    cur_y = fee_y
+
+    # --- Total Fee Required ---
+    c.setFont("Helvetica", 10)
+    c.drawString(x + 5 * mm, cur_y, "Total Fee Required:")
+    c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {gross_total:,.2f}")
+
+    # --- Less: Fee Waiver + Net Amount Due (if waiver exists) ---
+    if has_waiver:
+        cur_y -= line_h
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.HexColor("#2E7D32"))  # green for credit
+        c.drawString(x + 5 * mm, cur_y, "Less: Fee Waiver:")
+        c.drawRightString(x + w - 5 * mm, cur_y,
+                          f"KSh {current_term_waiver:,.2f}")
+        c.setFillColor(TEXT_DARK)
+
+        cur_y -= line_h
+        c.drawString(x + 5 * mm, cur_y, "Net Amount Due:")
+        c.drawRightString(x + w - 5 * mm, cur_y,
+                          f"KSh {total_fee:,.2f}")
+
+    # --- Current Term + Previous Balance breakdown (if previous balance) ---
+    if previous_balance > 0:
+        cur_y -= line_h
+        c.setFont("Helvetica", 9)
+        c.drawString(
+            x + 5 * mm, cur_y,
+            f"  (Current Term: KSh {current_term_gross:,.2f})",
+        )
+
+        cur_y -= line_h
+        c.drawString(
+            x + 5 * mm, cur_y,
+            f"  (Previous Balance: KSh {previous_balance:,.2f})",
+        )
+
+    # --- Amount Paid (always on its own line, no overlap) ---
+    cur_y -= line_h
+    c.setFont("Helvetica", 10)
+    c.drawString(x + 5 * mm, cur_y, "Amount Paid:")
+    c.drawRightString(
+        x + w - 5 * mm, cur_y,
+        f"KSh {payment['amount']:,.2f}",
+    )
+
+    # --- Balance line — larger bold font in accent color (focal point) ---
+    cur_y -= 8 * mm
+    c.saveState()
+    c.setFillColor(ACCENT)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x + 5 * mm, cur_y, "BALANCE:")
+    c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {balance_after:,.2f}")
+    c.restoreState()
+
+    y -= amounts_h + PAD_SM
+
+    # ================================================================
+    # SIGNATURE + QR CODE
+    # ================================================================
+    sig_y = y - 5 * mm
+    c.saveState()
+    c.setStrokeColor(colors.HexColor("#999999"))
+    c.setLineWidth(0.5)
+    c.line(x + 5 * mm, sig_y, x + 70 * mm, sig_y)
+    c.restoreState()
+
+    c.setFont("Helvetica", 9)
+    c.drawString(
+        x + 5 * mm,
+        sig_y - 5 * mm,
+        f"Received By: {payment['received_by'] or 'School Bursar'}",
+    )
+    c.drawString(
+        x + 5 * mm, sig_y - 11 * mm, "Signature: __________________"
+    )
+
+    # QR code (bottom-right, encodes receipt number for verification)
+    qr_size = 16 * mm
+    qr_data = f"Receipt:{payment['receipt_no']}"
+    _draw_qr_code(
+        c,
+        data=qr_data,
+        x=x + w - qr_size - 2 * mm,
+        y=sig_y - qr_size + 2 * mm,
+        size=qr_size,
+    )
+
+    y -= 18 * mm
+
+    # ================================================================
+    # PAYMENT DETAILS FOOTER (in original order, capped at 4 lines)
+    # ================================================================
+    if payment_details:
+        lines = []
+        for part in payment_details.splitlines():
+            part = part.strip()
+            while len(part) > 90:
+                idx = part.rfind(" ", 0, 90)
+                if idx == -1:
+                    idx = 90
+                lines.append(part[:idx])
+                part = part[idx:].lstrip()
+            if part:
+                lines.append(part)
+        c.setFont("Helvetica-Oblique", 7)
+        for i, line in enumerate(lines[:4]):
+            c.drawCentredString(
+                width / 2, y - 4 * mm - i * 3.5 * mm, line
+            )
+        y -= 4 * mm + min(len(lines), 4) * 3.5 * mm + PAD_SM
+
+    # ================================================================
+    # THANK YOU FOOTER
+    # ================================================================
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawCentredString(
+        width / 2, y - 4 * mm, "Thank you for making your payment."
+    )
+    c.drawCentredString(
+        width / 2,
+        y - 8 * mm,
+        "Please keep this receipt for future reference.",
+    )
+    y -= 10 * mm
+
+    # ================================================================
+    # SAVE
+    # ================================================================
+    c.showPage()
+    c.save()
+
+    # --- Log in receipts table (insert or update for reprint tracking) ---
+    if is_reprint:
+        conn.execute(
+            "UPDATE receipts SET file_path = ?, print_count = ? "
+            "WHERE receipt_no = ?",
+            (file_path, print_count, payment["receipt_no"]),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO receipts (payment_id, receipt_no, file_path, print_count) "
+            "VALUES (?, ?, ?, ?)",
+            (payment_id, payment["receipt_no"], file_path, print_count),
+        )
+    conn.commit()
+    return file_path
+
+
+def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
+    """Build a PDF master receipt for a bulk payment (NGO / sponsor).
+
+    Shows:
+      - School info
+      - Payer / organisation name, contact, payment method, reference
+      - Date paid
+      - Table of all covered students with amounts
+      - Total amount
+    """
+    from models.bulk_payment import get_bulk_payment_items
+    from models.term import get_term
+
+    os.makedirs(RECEIPTS_DIR, exist_ok=True)
+
+    receipt_no = bulk_payment["receipt_no"]
+    file_path = os.path.join(RECEIPTS_DIR, f"bulk_{receipt_no}.pdf")
+
+    c = canvas.Canvas(file_path, pagesize=A5)
+    w, h = A5
+
+    x = 5 * mm
+    y = h - 5 * mm
+    max_w = w - 10 * mm
+
+    info = get_school_info()
+    school_name = info.get("school_name") or "SCHOOL NAME HERE"
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawCentredString(w / 2, y, school_name)
+    y -= 6 * mm
+    c.setFont("Helvetica-Bold", 12)
+    c.drawCentredString(w / 2, y, "BULK PAYMENT RECEIPT")
+    y -= 8 * mm
+
+    c.setFont("Helvetica", 10)
+    c.drawString(x, y, f"Receipt No: {receipt_no}")
+    y -= 5 * mm
+    c.drawString(x, y, f"Date: {bulk_payment['date_paid']}")
+    y -= 5 * mm
+    c.drawString(x, y, f"Payer / Organisation: {bulk_payment['payer_name']}")
+    y -= 5 * mm
+    if bulk_payment.get("payer_contact"):
+        c.drawString(x, y, f"Contact: {bulk_payment['payer_contact']}")
+        y -= 5 * mm
+    c.drawString(x, y, f"Payment Method: {bulk_payment['method']}")
+    y -= 5 * mm
+    if bulk_payment.get("reference_no"):
+        c.drawString(x, y, f"Reference: {bulk_payment['reference_no']}")
+        y -= 5 * mm
+
+    term = get_term(bulk_payment["term_id"]) if bulk_payment["term_id"] else None
+    term_str = f"{term['term_name']} {term['year']}" if term else "N/A"
+    c.drawString(x, y, f"Term: {term_str}")
+    y -= 8 * mm
+
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x, y, "Students Covered:")
+    y -= 5 * mm
+
+    c.setFont("Helvetica", 9)
+    for item in items:
+        student_name = item["full_name"]
+        grade = item["grade"]
+        amount = item["amount"]
+        line = f"{student_name} ({grade})  -  KES {amount:,.2f}"
+        c.drawString(x, y, line)
+        y -= 4 * mm
+        if y < 20 * mm:
+            c.showPage()
+            y = h - 10 * mm
+            c.setFont("Helvetica", 9)
+
+    y -= 3 * mm
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(x, y, f"TOTAL AMOUNT: KES {bulk_payment['total_amount']:,.2f}")
+
+    c.showPage()
+    c.save()
+
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO receipts (payment_id, receipt_no, file_path, print_count) "
+        "VALUES (?, ?, ?, ?)",
+        (None, receipt_no, file_path, 1),
+    )
+    conn.commit()
+    return file_path
