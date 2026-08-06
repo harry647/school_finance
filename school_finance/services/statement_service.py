@@ -202,7 +202,7 @@ def _get_term_allocated_payments(student_id, term_id):
 def _get_term_waivers(student_id, term_id):
     """Return active (non-revoked) waiver rows for a student in a term."""
     conn = get_connection()
-    return conn.execute(
+    return [dict(r) for r in conn.execute(
         "SELECT w.*, c.amount AS gross_amount, c.description, "
         "t.term_name, t.year "
         "FROM waivers w "
@@ -211,7 +211,7 @@ def _get_term_waivers(student_id, term_id):
         "WHERE w.student_id = ? AND w.term_id = ? AND w.revoked_at IS NULL "
         "ORDER BY w.granted_at",
         (student_id, term_id),
-    ).fetchall()
+    ).fetchall()]
 
 
 def _next_statement_no(year):
@@ -446,7 +446,7 @@ def generate_statement(student, term_id=None, year=None):
     c.drawCentredString(width / 2, y - 6 * mm, "STUDENT INFORMATION")
 
     student_class = student["grade"]
-    if student.get("stream"):
+    if student["stream"]:
         student_class = f"{student['grade']} {student['stream']}"
     c.setFont("Helvetica", 9)
     c.drawString(x + 5 * mm, y - 12 * mm, f"Student Name: {student['full_name']}")

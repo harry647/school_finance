@@ -50,14 +50,15 @@ def create_bulk_payment(payer_name, method, term_id, items,
     conn = get_connection()
     cur = conn.execute(
         "INSERT INTO bulk_payments "
-        "(payer_name, payer_contact, method, reference_no, term_id, "
+        "(payer_name, payer_contact, method, reference_no, receipt_no, term_id, "
         "total_amount, date_paid, notes, created_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             payer_name.strip(),
             payer_contact.strip() if payer_contact else None,
             method,
             reference_no.strip() if reference_no else None,
+            receipt_no,
             term_id,
             total_amount,
             date_paid,

@@ -616,88 +616,308 @@ def generate_receipt(payment_id, student, term_id, balance_after):
 def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
     """Build a PDF master receipt for a bulk payment (NGO / sponsor).
 
-    Shows:
-      - School info
-      - Payer / organisation name, contact, payment method, reference
-      - Date paid
-      - Table of all covered students with amounts
-      - Total amount
+    Uses the same visual style as generate_receipt:
+      - School header with logo, name, motto, address, phone
+      - Accent receipt bar
+      - Shaded info panels
+      - QR code
+      - Footer
     """
-    from models.bulk_payment import get_bulk_payment_items
-    from models.term import get_term
-
+    bulk_payment = dict(bulk_payment)
     os.makedirs(RECEIPTS_DIR, exist_ok=True)
 
     receipt_no = bulk_payment["receipt_no"]
     file_path = os.path.join(RECEIPTS_DIR, f"bulk_{receipt_no}.pdf")
 
-    c = canvas.Canvas(file_path, pagesize=A5)
-    w, h = A5
-
-    x = 5 * mm
-    y = h - 5 * mm
-    max_w = w - 10 * mm
-
     info = get_school_info()
     school_name = info.get("school_name") or "SCHOOL NAME HERE"
-
-    c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(w / 2, y, school_name)
-    y -= 6 * mm
-    c.setFont("Helvetica-Bold", 12)
-    c.drawCentredString(w / 2, y, "BULK PAYMENT RECEIPT")
-    y -= 8 * mm
-
-    c.setFont("Helvetica", 10)
-    c.drawString(x, y, f"Receipt No: {receipt_no}")
-    y -= 5 * mm
-    c.drawString(x, y, f"Date: {bulk_payment['date_paid']}")
-    y -= 5 * mm
-    c.drawString(x, y, f"Payer / Organisation: {bulk_payment['payer_name']}")
-    y -= 5 * mm
-    if bulk_payment.get("payer_contact"):
-        c.drawString(x, y, f"Contact: {bulk_payment['payer_contact']}")
-        y -= 5 * mm
-    c.drawString(x, y, f"Payment Method: {bulk_payment['method']}")
-    y -= 5 * mm
-    if bulk_payment.get("reference_no"):
-        c.drawString(x, y, f"Reference: {bulk_payment['reference_no']}")
-        y -= 5 * mm
+    motto = info.get("motto") or ""
+    address = info.get("address") or ""
+    phone = info.get("phone") or ""
+    logo_path = info.get("logo_path") or ""
+    payment_details = info.get("payment_details") or ""
 
     term = get_term(bulk_payment["term_id"]) if bulk_payment["term_id"] else None
-    term_str = f"{term['term_name']} {term['year']}" if term else "N/A"
-    c.drawString(x, y, f"Term: {term_str}")
-    y -= 8 * mm
+    term_name = term["term_name"] if term else "N/A"
+    year = term["year"] if term else datetime.datetime.now().year
+
+    date_str = _format_date(bulk_payment["date_paid"])
+
+    c = canvas.Canvas(file_path, pagesize=A5)
+    width, height = A5
+
+    margin = 12 * mm
+    x = margin
+    w = width - 2 * margin
+    y = height - margin
+
+    # ================================================================
+    # HEADER SECTION (same style as single receipt)
+    # ================================================================
+    name_lines = _wrap_text(c, school_name, "Helvetica-Bold", 13, w - 10 * mm)
+    name_size = 13
+    if len(name_lines) > 2:
+        name_size = 11
+        while name_size > 9 and len(
+            _wrap_text(c, school_name, "Helvetica-Bold", name_size, w - 10 * mm)
+        ) > 2:
+            name_size -= 0.5
+        name_lines = _wrap_text(
+            c, school_name, "Helvetica-Bold", name_size, w - 10 * mm
+        )
+
+    optional_count = sum(1 for f in (motto, address, phone) if f)
+    header_h = 30 * mm
+    if len(name_lines) > 1:
+        header_h += 5 * mm
+    header_h += optional_count * 5 * mm + PAD_SM
+
+    _draw_shaded_panel(c, x, y - header_h, w, header_h, fill_color=colors.white)
+
+    logo_bottom = y
+    if logo_path and os.path.isfile(logo_path):
+        try:
+            img_w, img_h = ImageReader(logo_path).getSize()
+            max_w, max_h = 28 * mm, 20 * mm
+            scale = min(max_w / img_w, max_h / img_h)
+            draw_w, draw_h = img_w * scale, img_h * scale
+            mask = "auto" if logo_path.lower().endswith(".png") else None
+            c.drawImage(
+                logo_path,
+                (width - draw_w) / 2,
+                y - draw_h - 2 * mm,
+                draw_w,
+                draw_h,
+                mask=mask,
+            )
+            logo_bottom = y - draw_h - 2 * mm
+        except Exception:
+            pass
+
+    text_y = logo_bottom - PAD_SM
+    c.setFont("Helvetica-Bold", name_size)
+    for line in name_lines[:2]:
+        c.drawCentredString(width / 2, text_y, line)
+        text_y -= 5 * mm
+
+    if motto:
+        c.setFont("Helvetica-Oblique", 9)
+        c.drawCentredString(width / 2, text_y, f'"{motto}"')
+        text_y -= 5 * mm
+
+    if address:
+        addr_lines = _wrap_text(c, address, "Helvetica", 9, w - 10 * mm)
+        c.setFont("Helvetica", 9)
+        for line in addr_lines[:2]:
+            c.drawCentredString(width / 2, text_y, line)
+            text_y -= 4 * mm
+
+    if phone:
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(width / 2, text_y, f"Tel: {phone}")
+
+    y -= header_h + PAD_SM
+
+    # ================================================================
+    # RECEIPT BAR
+    # ================================================================
+    bar_h = 10 * mm
+    c.saveState()
+    c.setFillColor(ACCENT_LIGHT)
+    c.setStrokeColor(ACCENT)
+    c.setLineWidth(1.0)
+    c.rect(x, y - bar_h, w, bar_h, fill=1, stroke=1)
+    c.restoreState()
+    _draw_accent_rule(c, x, y, x + w, color=ACCENT, width=1.5)
+    _draw_accent_rule(c, x, y - bar_h, x + w, color=ACCENT, width=1.5)
+
+    c.setFont("Helvetica-Bold", 11)
+    c.drawCentredString(width / 2, y - 7 * mm, "OFFICIAL BULK PAYMENT RECEIPT")
+
+    badge_w = 28 * mm
+    badge_h = 6 * mm
+    _draw_status_badge(
+        c,
+        x + w - badge_w - 3 * mm,
+        y - bar_h / 2 - badge_h / 2,
+        "PAID",
+        width=badge_w,
+        height=badge_h,
+    )
+
+    y -= bar_h + PAD_SM
+
+    # ================================================================
+    # RECEIPT DETAILS
+    # ================================================================
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x + 5 * mm, y - 5 * mm, f"Receipt No: {receipt_no}")
+    c.setFont("Helvetica", 10)
+    c.drawString(x + w * 0.55, y - 5 * mm, f"Date: {date_str}")
+    c.drawString(x + 5 * mm, y - 11 * mm, f"Academic Year: {year}")
+    c.drawString(x + w * 0.55, y - 11 * mm, f"Term: {term_name}")
+
+    y -= 13 * mm + PAD_SM
+
+    # ================================================================
+    # ORGANISATION / PAYER PANEL
+    # ================================================================
+    org_lines = 2
+    if bulk_payment.get("payer_contact"):
+        org_lines += 1
+    if bulk_payment.get("reference_no"):
+        org_lines += 1
+    org_panel_h = org_lines * 5 * mm + 6 * mm
+    _draw_shaded_panel(c, x, y - org_panel_h, w, org_panel_h)
 
     c.setFont("Helvetica-Bold", 10)
-    c.drawString(x, y, "Students Covered:")
-    y -= 5 * mm
+    c.drawCentredString(width / 2, y - 6 * mm, "PAYER / ORGANISATION INFORMATION")
 
     c.setFont("Helvetica", 9)
-    for item in items:
+    c.drawString(x + 5 * mm, y - 11 * mm, f"Organisation: {bulk_payment['payer_name']}")
+    c.drawString(x + w * 0.55, y - 11 * mm, f"Method: {bulk_payment['method']}")
+
+    contact_y = y - 16 * mm
+    if bulk_payment.get("payer_contact"):
+        c.drawString(x + 5 * mm, contact_y, f"Contact: {bulk_payment['payer_contact']}")
+        contact_y -= 4 * mm
+    if bulk_payment.get("reference_no"):
+        c.drawString(x + 5 * mm, contact_y, f"Reference: {bulk_payment['reference_no']}")
+
+    y -= org_panel_h + PAD_SM
+
+    # ================================================================
+    # STUDENTS COVERED
+    # ================================================================
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x + 5 * mm, y - 5 * mm, "Students Covered:")
+    y -= 8 * mm
+
+    c.setFont("Helvetica", 9)
+    for idx, item in enumerate(items, start=1):
         student_name = item["full_name"]
         grade = item["grade"]
         amount = item["amount"]
-        line = f"{student_name} ({grade})  -  KES {amount:,.2f}"
-        c.drawString(x, y, line)
+        line = f"{idx}. {student_name} ({grade})  -  KES {amount:,.2f}"
+        c.drawString(x + 5 * mm, y, line)
         y -= 4 * mm
-        if y < 20 * mm:
+        if y < 25 * mm:
             c.showPage()
             y = h - 10 * mm
             c.setFont("Helvetica", 9)
 
-    y -= 3 * mm
-    c.setFont("Helvetica-Bold", 11)
-    c.drawString(x, y, f"TOTAL AMOUNT: KES {bulk_payment['total_amount']:,.2f}")
+    # ================================================================
+    # AMOUNTS PANEL
+    # ================================================================
+    amounts_h = 3 * 6 * mm + 9 * mm
+    _draw_shaded_panel(c, x, y - amounts_h, w, amounts_h)
+
+    line_h = 6 * mm
+    cur_y = y - 8 * mm
+    c.setFont("Helvetica", 10)
+    c.drawString(x + 5 * mm, cur_y, "Total Amount Paid:")
+    c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {bulk_payment['total_amount']:,.2f}")
+
+    cur_y -= line_h
+    c.drawString(x + 5 * mm, cur_y, "Students Count:")
+    c.drawRightString(x + w - 5 * mm, cur_y, str(len(items)))
+
+    cur_y -= 8 * mm
+    c.saveState()
+    c.setFillColor(ACCENT)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(x + 5 * mm, cur_y, "TOTAL:")
+    c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {bulk_payment['total_amount']:,.2f}")
+    c.restoreState()
+
+    y -= amounts_h + PAD_SM
+
+    # ================================================================
+    # SIGNATURE + QR CODE
+    # ================================================================
+    sig_y = y - 5 * mm
+    c.saveState()
+    c.setStrokeColor(colors.HexColor("#999999"))
+    c.setLineWidth(0.5)
+    c.line(x + 5 * mm, sig_y, x + 70 * mm, sig_y)
+    c.restoreState()
+
+    c.setFont("Helvetica", 9)
+    c.drawString(
+        x + 5 * mm,
+        sig_y - 5 * mm,
+        f"Received By: {bulk_payment.get('created_by') or 'School Bursar'}",
+    )
+    c.drawString(
+        x + 5 * mm, sig_y - 11 * mm, "Authorised Signature: __________________"
+    )
+
+    qr_size = 16 * mm
+    qr_data = f"BulkReceipt:{receipt_no}"
+    _draw_qr_code(
+        c,
+        data=qr_data,
+        x=x + w - qr_size - 2 * mm,
+        y=sig_y - qr_size + 2 * mm,
+        size=qr_size,
+    )
+
+    y -= 18 * mm
+
+    # ================================================================
+    # PAYMENT DETAILS FOOTER
+    # ================================================================
+    if payment_details:
+        lines = []
+        for part in payment_details.splitlines():
+            part = part.strip()
+            while len(part) > 90:
+                idx = part.rfind(" ", 0, 90)
+                if idx == -1:
+                    idx = 90
+                lines.append(part[:idx])
+                part = part[idx:].lstrip()
+            if part:
+                lines.append(part)
+        c.setFont("Helvetica-Oblique", 7)
+        for i, line in enumerate(lines[:4]):
+            c.drawCentredString(
+                width / 2, y - 4 * mm - i * 3.5 * mm, line
+            )
+        y -= 4 * mm + min(len(lines), 4) * 3.5 * mm + PAD_SM
+
+    # ================================================================
+    # THANK YOU FOOTER
+    # ================================================================
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawCentredString(
+        width / 2, y - 4 * mm, "Thank you for your kind support."
+    )
+    c.drawCentredString(
+        width / 2,
+        y - 8 * mm,
+        "Please keep this receipt for future reference.",
+    )
 
     c.showPage()
     c.save()
 
     conn = get_connection()
-    conn.execute(
-        "INSERT INTO receipts (payment_id, receipt_no, file_path, print_count) "
-        "VALUES (?, ?, ?, ?)",
-        (None, receipt_no, file_path, 1),
-    )
+    existing = conn.execute(
+        "SELECT id, print_count FROM receipts WHERE receipt_no = ?",
+        (receipt_no,),
+    ).fetchone()
+    if existing:
+        print_count = (existing["print_count"] or 1) + 1
+        conn.execute(
+            "UPDATE receipts SET file_path = ?, print_count = ? WHERE receipt_no = ?",
+            (file_path, print_count, receipt_no),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO receipts (payment_id, receipt_no, file_path, print_count) "
+            "VALUES (?, ?, ?, ?)",
+            (None, receipt_no, file_path, 1),
+        )
     conn.commit()
     return file_path

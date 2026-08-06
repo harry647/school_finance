@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox, simpledialog
 from models.student import (add_student, update_student, delete_student,
                              list_students_with_balance, list_grades, get_student,
                              list_students, set_fee_waiver, remove_fee_waiver,
-                             is_fee_waived, list_waived_students)
+                             is_fee_waived, list_waived_students, auto_promote_students)
 from models.payment import add_charge
 from models.term import list_terms, get_or_create_term
 from models.fee_structure import get_fee, get_missing_fee_structures

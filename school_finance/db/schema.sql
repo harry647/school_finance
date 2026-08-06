@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS payments (
 
 CREATE TABLE IF NOT EXISTS receipts (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    payment_id    INTEGER NOT NULL REFERENCES payments(id) ON DELETE CASCADE,
+    payment_id    INTEGER REFERENCES payments(id) ON DELETE CASCADE,
     receipt_no    TEXT UNIQUE NOT NULL,
     file_path     TEXT,
     date_issued   TEXT NOT NULL DEFAULT (datetime('now')),

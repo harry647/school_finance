@@ -212,6 +212,7 @@ class CreateBulkPaymentDialog(tk.Toplevel):
 
     def _add_student(self):
         dialog = AddStudentDialog(self, self.app)
+        self.wait_window(dialog)
         if dialog.result:
             self._items.append(dialog.result)
             self._refresh_items()
@@ -279,9 +280,25 @@ class CreateBulkPaymentDialog(tk.Toplevel):
         log_action(self.app.current_username, "create_bulk_payment",
                    f"Created bulk payment BULK-{result['bulk_payment_id']:06d} "
                    f"for {payer} ({len(self._items)} students, KES {sum(i['amount'] for i in self._items):,.2f})")
-        messagebox.showinfo("Bulk payment created",
-                            f"Bulk payment {result['receipt_no']} created.\n"
-                            f"{len(self._items)} payment(s) recorded.")
+
+        try:
+            from services.receipt_service import generate_bulk_receipt
+            from models.bulk_payment import get_bulk_payment, get_bulk_payment_items
+            bp = get_bulk_payment(result["bulk_payment_id"])
+            items = get_bulk_payment_items(result["bulk_payment_id"])
+            bulk_path = generate_bulk_receipt(result["bulk_payment_id"], bp, items)
+            receipt_msg = (
+                f"Bulk payment {result['receipt_no']} created.\n"
+                f"{len(self._items)} payment(s) recorded.\n\n"
+                f"Master receipt saved to:\n{bulk_path}"
+            )
+        except Exception as e:
+            receipt_msg = (
+                f"Bulk payment {result['receipt_no']} created.\n"
+                f"{len(self._items)} payment(s) recorded.\n\n"
+                f"Could not generate master receipt:\n{e}"
+            )
+        messagebox.showinfo("Bulk payment created", receipt_msg)
         self.destroy()
 
 
@@ -345,6 +362,7 @@ class AddStudentDialog(tk.Toplevel):
 class ViewBulkPaymentDialog(tk.Toplevel):
     def __init__(self, parent, bulk_payment_id):
         super().__init__(parent)
+        self.app = parent.app
         self.bulk_payment_id = bulk_payment_id
         self.title(f"Bulk Payment Details - ID {bulk_payment_id}")
         self.resizable(True, True)
@@ -357,7 +375,7 @@ class ViewBulkPaymentDialog(tk.Toplevel):
             self.destroy()
             return
 
-        items = get_bulk_payment_items(bulk_payment_id)
+        items = [dict(item) for item in get_bulk_payment_items(bulk_payment_id)]
 
         frame = ttk.Frame(self, padding=PAD_MD)
         frame.pack(fill="both", expand=True)
@@ -425,6 +443,7 @@ class ViewBulkPaymentDialog(tk.Toplevel):
 
     def _generate_individual_receipts(self, items):
         count = 0
+        paths = []
         errors = []
         for item in items:
             payment_id = item.get("payment_id")
@@ -435,14 +454,17 @@ class ViewBulkPaymentDialog(tk.Toplevel):
                 if not student:
                     continue
                 balance = get_balance(item["student_id"])
-                generate_receipt(payment_id, student, item.get("term_id"), balance)
+                path = generate_receipt(payment_id, student, item.get("term_id"), balance)
                 count += 1
+                paths.append(path)
             except Exception as e:
                 errors.append(f"Student {item['full_name']}: {e}")
         if count:
             log_action(self.app.current_username, "generate_bulk_individual_receipts",
                        f"Generated {count} individual receipt(s) for bulk payment id={self.bulk_payment_id}")
         msg = f"Generated {count} receipt(s)."
+        if paths:
+            msg += f"\n\nSaved to:\n" + "\n".join(paths[:10])
         if errors:
             msg += f"\n\nErrors:\n" + "\n".join(errors[:5])
         messagebox.showinfo("Receipts generated", msg)

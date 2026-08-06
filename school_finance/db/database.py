@@ -99,6 +99,26 @@ def _run_migrations(conn):
     receipt_cols = [r["name"] for r in conn.execute("PRAGMA table_info(receipts)").fetchall()]
     if "print_count" not in receipt_cols:
         conn.execute("ALTER TABLE receipts ADD COLUMN print_count INTEGER DEFAULT 1")
+    receipt_not_null = conn.execute("PRAGMA table_info(receipts)").fetchall()
+    for col in receipt_not_null:
+        if col["name"] == "payment_id" and col["notnull"] == 1:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS receipts_new (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    payment_id    INTEGER REFERENCES payments(id) ON DELETE CASCADE,
+                    receipt_no    TEXT UNIQUE NOT NULL,
+                    file_path     TEXT,
+                    date_issued   TEXT NOT NULL DEFAULT (datetime('now')),
+                    print_count   INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            conn.execute("""
+                INSERT INTO receipts_new (id, payment_id, receipt_no, file_path, date_issued, print_count)
+                SELECT id, payment_id, receipt_no, file_path, date_issued, print_count FROM receipts
+            """)
+            conn.execute("DROP TABLE receipts")
+            conn.execute("ALTER TABLE receipts_new RENAME TO receipts")
+            break
     if "payment_allocations" not in tables:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS payment_allocations (
@@ -160,6 +180,7 @@ def _run_migrations(conn):
                 payer_contact TEXT,
                 method        TEXT NOT NULL,
                 reference_no  TEXT,
+                receipt_no    TEXT UNIQUE,
                 term_id       INTEGER REFERENCES terms(id),
                 total_amount  REAL NOT NULL,
                 date_paid     TEXT NOT NULL DEFAULT (datetime('now')),
@@ -180,6 +201,9 @@ def _run_migrations(conn):
             CREATE INDEX IF NOT EXISTS idx_bulk_payment_items_bulk
                 ON bulk_payment_items(bulk_payment_id);
         """)
+    bulk_cols = [r["name"] for r in conn.execute("PRAGMA table_info(bulk_payments)").fetchall()]
+    if "receipt_no" not in bulk_cols:
+        conn.execute("ALTER TABLE bulk_payments ADD COLUMN receipt_no TEXT")
     conn.commit()
 
 
