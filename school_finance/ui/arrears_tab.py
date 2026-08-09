@@ -116,7 +116,7 @@ class ArrearsTab(ttk.Frame):
         if student:
             from services.statement_service import generate_statement
             from ui.payments_tab import _open_file
-            path = generate_statement(student)
+            path = generate_statement(student, generated_by_role=self.app.current_role)
             log_action(self.app.current_username, "generate_statement",
                        f"Statement for {student['full_name']}")
             _open_file(path)

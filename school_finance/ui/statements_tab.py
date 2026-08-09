@@ -149,7 +149,7 @@ class StatementsTab(ttk.Frame):
         if self.year_var.get() != "All":
             year = int(self.year_var.get())
         try:
-            path = generate_statement(student, term_id=term_id, year=year)
+            path = generate_statement(student, term_id=term_id, year=year, generated_by_role=self.app.current_role)
             log_action(self.app.current_username, "generate_statement",
                        f"Statement for {student['full_name']}")
             messagebox.showinfo("Statement ready", f"Saved to:\n{path}")

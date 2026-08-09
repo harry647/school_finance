@@ -532,10 +532,19 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     c.restoreState()
 
     c.setFont("Helvetica", 9)
+    received_by_username = payment["received_by"]
+    role = None
+    if received_by_username:
+        user_row = conn.execute(
+            "SELECT role FROM users WHERE username = ?", (received_by_username,)
+        ).fetchone()
+        if user_row:
+            role = user_row["role"]
+    received_by_text = f"Received By: {role}" if role else f"Received By: {received_by_username or 'School Bursar'}"
     c.drawString(
         x + 5 * mm,
         sig_y - 5 * mm,
-        f"Received By: {payment['received_by'] or 'School Bursar'}",
+        received_by_text,
     )
     c.drawString(
         x + 5 * mm, sig_y - 11 * mm, "Signature: __________________"
