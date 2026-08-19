@@ -8,7 +8,7 @@ from models.student_credits import (
     get_student_credit_summary,
 )
 from models.user import log_action
-from ui.constants import PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD
+from ui.constants import PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column
 
 
 class CreditsTab(ttk.Frame):
@@ -45,7 +45,8 @@ class CreditsTab(ttk.Frame):
         widths = {"student": 180, "grade": 90, "admission": 110,
                   "amount": 110, "remaining": 110, "date": 120, "status": 90}
         for col in columns:
-            self.tree.heading(col, text=headings[col])
+            self.tree.heading(col, text=headings[col],
+                               command=lambda c=col: self._on_sort_column(c))
             anchor = "e" if col in ("amount", "remaining") else "w"
             self.tree.column(col, width=widths[col], anchor=anchor)
         self.tree.pack(fill="both", expand=True)
@@ -143,3 +144,9 @@ class CreditsTab(ttk.Frame):
         self._selected_credit_id = None
         self.detail_label.config(text="Select a credit to view details.")
         self.refresh()
+
+    def _on_sort_column(self, col):
+        reverse = getattr(self.tree, "_sorted_reverse", False)
+        if getattr(self.tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(self.tree, col, reverse)

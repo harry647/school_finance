@@ -6,7 +6,7 @@ from services.report_service import get_income_by_method_data, get_income_by_met
 from services.export_service import export_income_by_method
 from services.pdf_report_service import export_income_pdf
 from models.user import log_action
-from ui.constants import FONT_BODY, FONT_TITLE_LG, PAD_MD, PAD_SM, PAD_XS, PRIMARY_DARK, SUCCESS, WARNING, ZEBRA_EVEN, ZEBRA_ODD, PRIMARY
+from ui.constants import FONT_BODY, FONT_TITLE_LG, PAD_MD, PAD_SM, PAD_XS, PRIMARY_DARK, SUCCESS, WARNING, ZEBRA_EVEN, ZEBRA_ODD, PRIMARY, sort_treeview_column
 
 
 class IncomeTab(ttk.Frame):
@@ -73,7 +73,8 @@ class IncomeTab(ttk.Frame):
         widths = {"receipt": 100, "student": 170, "grade": 80, "stream": 80,
                   "amount": 100, "method": 90, "date": 140}
         for col in columns:
-            self.tree.heading(col, text=headings[col])
+            self.tree.heading(col, text=headings[col],
+                               command=lambda c=col: self._on_sort_column(c))
             self.tree.column(col, width=widths[col], anchor="w")
         self.tree.pack(fill="both", expand=True)
         self.tree.tag_configure("odd", background=ZEBRA_ODD)
@@ -110,6 +111,12 @@ class IncomeTab(ttk.Frame):
             self.tree.insert("", "end", values=(
                 p["receipt_no"], p["full_name"], p["grade"], dict(p).get("stream", "") or "-",
                 f"{p['amount']:,.2f}", p["method"], p["date_paid"]), tags=(tag,))
+
+    def _on_sort_column(self, col):
+        reverse = getattr(self.tree, "_sorted_reverse", False)
+        if getattr(self.tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(self.tree, col, reverse)
 
     def _export(self):
         term_key = self.term_var.get()

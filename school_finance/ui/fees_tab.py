@@ -5,7 +5,7 @@ from models.student import list_grades
 from models.term import list_terms, get_or_create_term
 from models.fee_structure import set_fee, get_fee, list_fees, delete_fee
 from models.user import log_action
-from ui.constants import DANGER, FONT_MUTED, PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD
+from ui.constants import DANGER, FONT_MUTED, PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column
 
 
 class FeesTab(ttk.Frame):
@@ -54,10 +54,14 @@ class FeesTab(ttk.Frame):
 
         columns = ("grade", "term", "amount", "description")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14)
-        self.tree.heading("grade", text="Grade")
-        self.tree.heading("term", text="Term")
-        self.tree.heading("amount", text="Amount (KES)")
-        self.tree.heading("description", text="Description")
+        self.tree.heading("grade", text="Grade",
+                          command=lambda c="grade": self._on_sort_column(c))
+        self.tree.heading("term", text="Term",
+                          command=lambda c="term": self._on_sort_column(c))
+        self.tree.heading("amount", text="Amount (KES)",
+                          command=lambda c="amount": self._on_sort_column(c))
+        self.tree.heading("description", text="Description",
+                          command=lambda c="description": self._on_sort_column(c))
         self.tree.column("grade", width=120, anchor="w")
         self.tree.column("term", width=140, anchor="w")
         self.tree.column("amount", width=100, anchor="e")
@@ -88,6 +92,12 @@ class FeesTab(ttk.Frame):
             tag = "even" if idx % 2 == 0 else "odd"
             self.tree.insert("", "end", values=(
                 f["grade"], term_str, f"{f['amount']:,.2f}", f["description"] or ""), tags=(tag,))
+
+    def _on_sort_column(self, col):
+        reverse = getattr(self.tree, "_sorted_reverse", False)
+        if getattr(self.tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(self.tree, col, reverse)
 
     def _save(self):
         grade = self.grade_var.get().strip()

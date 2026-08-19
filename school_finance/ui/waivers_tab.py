@@ -10,7 +10,7 @@ from models.waiver import (
     revoke_waiver,
 )
 from models.user import log_action
-from ui.constants import PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD
+from ui.constants import PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column
 
 
 class WaiversTab(ttk.Frame):
@@ -55,7 +55,8 @@ class WaiversTab(ttk.Frame):
                     "waived": "Waived (KES)", "net": "Net Fee (KES)"}
         widths = {"term": 160, "gross": 130, "waived": 130, "net": 130}
         for col in columns:
-            self.term_tree.heading(col, text=headings[col])
+            self.term_tree.heading(col, text=headings[col],
+                                    command=lambda c=col: self._on_sort_column(self.term_tree, c))
             self.term_tree.column(col, width=widths[col], anchor="e" if col != "term" else "w")
         self.term_tree.pack(fill="both", expand=True)
         self.term_tree.tag_configure("odd", background=ZEBRA_ODD)
@@ -76,7 +77,8 @@ class WaiversTab(ttk.Frame):
         widths = {"charge": 140, "amount": 100, "reason": 120,
                   "granted_by": 90, "date": 120, "status": 80}
         for col in columns:
-            self.waiver_tree.heading(col, text=headings[col])
+            self.waiver_tree.heading(col, text=headings[col],
+                                     command=lambda c=col: self._on_sort_column(self.waiver_tree, c))
             anchor = "e" if col == "amount" else "w"
             self.waiver_tree.column(col, width=widths[col], anchor=anchor)
         self.waiver_tree.pack(fill="both", expand=True)
@@ -272,3 +274,9 @@ class WaiversTab(ttk.Frame):
                    f"Revoked partial waiver KES {amount} for {student_name} (charge={charge_desc})")
         messagebox.showinfo("Waiver revoked", "Partial waiver has been revoked.")
         self._load_waivers()
+
+    def _on_sort_column(self, tree, col):
+        reverse = getattr(tree, "_sorted_reverse", False)
+        if getattr(tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(tree, col, reverse)

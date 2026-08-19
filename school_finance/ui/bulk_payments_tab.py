@@ -10,7 +10,7 @@ from models.bulk_payment import (
 )
 from models.user import log_action
 from services.receipt_service import generate_receipt
-from ui.constants import PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD, DANGER
+from ui.constants import PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD, DANGER, sort_treeview_column
 
 
 class BulkPaymentsTab(ttk.Frame):
@@ -50,7 +50,8 @@ class BulkPaymentsTab(ttk.Frame):
             "reference": 120, "term": 100, "total": 120, "students": 80
         }
         for col in columns:
-            self.tree.heading(col, text=headings[col])
+            self.tree.heading(col, text=headings[col],
+                               command=lambda c=col: self._on_sort_column(self.tree, c))
             anchor = "e" if col in ("id", "total", "students") else "w"
             self.tree.column(col, width=widths[col], anchor=anchor)
         self.tree.pack(fill="both", expand=True)
@@ -84,8 +85,14 @@ class BulkPaymentsTab(ttk.Frame):
                 bp["reference_no"] or "",
                 term_name,
                 f"{bp['total_amount']:,.2f}",
-                str(student_count),
-            ), tags=(tag,))
+                 str(student_count),
+             ), tags=(tag,))
+
+    def _on_sort_column(self, tree, col):
+        reverse = getattr(tree, "_sorted_reverse", False)
+        if getattr(tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(tree, col, reverse)
 
     def _get_selected_bulk_payment_id(self):
         sel = self.tree.selection()
@@ -189,9 +196,12 @@ class CreateBulkPaymentDialog(tk.Toplevel):
 
         columns = ("name", "grade", "amount")
         self.item_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=6)
-        self.item_tree.heading("name", text="Student")
-        self.item_tree.heading("grade", text="Grade")
-        self.item_tree.heading("amount", text="Amount (KES)")
+        self.item_tree.heading("name", text="Student",
+                                command=lambda c="name": self._on_sort_column(self.item_tree, c))
+        self.item_tree.heading("grade", text="Grade",
+                                command=lambda c="grade": self._on_sort_column(self.item_tree, c))
+        self.item_tree.heading("amount", text="Amount (KES)",
+                                command=lambda c="amount": self._on_sort_column(self.item_tree, c))
         self.item_tree.column("name", width=200)
         self.item_tree.column("grade", width=80)
         self.item_tree.column("amount", width=100, anchor="e")
@@ -408,7 +418,8 @@ class ViewBulkPaymentDialog(tk.Toplevel):
                     "admission": "Admission No.", "amount": "Amount (KES)"}
         widths = {"id": 50, "name": 200, "grade": 80, "admission": 120, "amount": 100}
         for col in columns:
-            self.item_tree.heading(col, text=headings[col])
+            self.item_tree.heading(col, text=headings[col],
+                                    command=lambda c=col: self._on_sort_column(self.item_tree, c))
             anchor = "e" if col in ("id", "amount") else "w"
             self.item_tree.column(col, width=widths[col], anchor=anchor)
         self.item_tree.pack(fill="both", expand=True)

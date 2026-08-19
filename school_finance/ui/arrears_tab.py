@@ -6,7 +6,7 @@ from services.report_service import get_arrears_data
 from services.export_service import export_arrears
 from services.pdf_report_service import export_arrears_pdf
 from models.user import log_action
-from ui.constants import FONT_BODY_ITALIC, FONT_MUTED, PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD
+from ui.constants import FONT_BODY_ITALIC, FONT_MUTED, PAD_MD, PAD_SM, PAD_XS, ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column
 
 
 class ArrearsTab(ttk.Frame):
@@ -42,7 +42,8 @@ class ArrearsTab(ttk.Frame):
         widths = {"id": 40, "name": 200, "grade": 90, "stream": 90,
                   "admission": 120, "balance": 120}
         for col in columns:
-            self.tree.heading(col, text=headings[col])
+            self.tree.heading(col, text=headings[col],
+                               command=lambda c=col: self._on_sort_column(c))
             self.tree.column(col, width=widths[col],
                               anchor="center" if col in ("id", "grade", "stream", "balance") else "w")
         self.tree.pack(fill="both", expand=True)
@@ -80,6 +81,12 @@ class ArrearsTab(ttk.Frame):
         self.grade_combo["values"] = grades
         if self.grade_var.get() not in grades:
             self.grade_var.set("All")
+
+    def _on_sort_column(self, col):
+        reverse = getattr(self.tree, "_sorted_reverse", False)
+        if getattr(self.tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(self.tree, col, reverse)
 
     def _export(self):
         try:

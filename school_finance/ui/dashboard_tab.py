@@ -4,7 +4,7 @@ from tkinter import ttk, messagebox
 from services.report_service import get_dashboard_data, get_dashboard_collection_trend
 from services.export_service import export_arrears
 from models.user import log_action
-from ui.constants import BACKGROUND, BarChart, FONT_BODY, FONT_BODY_ITALIC, FONT_MUTED, FONT_TITLE, FONT_TITLE_LG, PAD_MD, PAD_SM, PAD_XS, PRIMARY, SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, WARNING, ZEBRA_EVEN, ZEBRA_ODD
+from ui.constants import BACKGROUND, BarChart, FONT_BODY, FONT_BODY_ITALIC, FONT_MUTED, FONT_TITLE, FONT_TITLE_LG, PAD_MD, PAD_SM, PAD_XS, PRIMARY, SUCCESS, TEXT_PRIMARY, TEXT_SECONDARY, WARNING, ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column
 
 
 class DashboardTab(ttk.Frame):
@@ -55,8 +55,10 @@ class DashboardTab(ttk.Frame):
 
         columns = ("grade", "count")
         self.grade_tree = ttk.Treeview(grade_frame, columns=columns, show="headings", height=6)
-        self.grade_tree.heading("grade", text="Grade")
-        self.grade_tree.heading("count", text="Count")
+        self.grade_tree.heading("grade", text="Grade",
+                                command=lambda c="grade": self._on_sort_column(self.grade_tree, c))
+        self.grade_tree.heading("count", text="Count",
+                                command=lambda c="count": self._on_sort_column(self.grade_tree, c))
         self.grade_tree.column("grade", width=200, anchor="w")
         self.grade_tree.column("count", width=100, anchor="center")
         self.grade_tree.tag_configure("odd", background=ZEBRA_ODD)
@@ -74,10 +76,14 @@ class DashboardTab(ttk.Frame):
 
         columns = ("name", "grade", "stream", "balance")
         self.defaulter_tree = ttk.Treeview(defaulter_frame, columns=columns, show="headings", height=6)
-        self.defaulter_tree.heading("name", text="Student Name")
-        self.defaulter_tree.heading("grade", text="Grade")
-        self.defaulter_tree.heading("stream", text="Stream")
-        self.defaulter_tree.heading("balance", text="Balance (KES)")
+        self.defaulter_tree.heading("name", text="Student Name",
+                                    command=lambda c="name": self._on_sort_column(self.defaulter_tree, c))
+        self.defaulter_tree.heading("grade", text="Grade",
+                                    command=lambda c="grade": self._on_sort_column(self.defaulter_tree, c))
+        self.defaulter_tree.heading("stream", text="Stream",
+                                    command=lambda c="stream": self._on_sort_column(self.defaulter_tree, c))
+        self.defaulter_tree.heading("balance", text="Balance (KES)",
+                                    command=lambda c="balance": self._on_sort_column(self.defaulter_tree, c))
         self.defaulter_tree.column("name", width=220, anchor="w")
         self.defaulter_tree.column("grade", width=100, anchor="center")
         self.defaulter_tree.column("stream", width=100, anchor="center")
@@ -128,3 +134,9 @@ class DashboardTab(ttk.Frame):
             tag = "even" if idx % 2 == 0 else "odd"
             self.defaulter_tree.insert("", "end", values=(
                 d["name"], d["grade"], d.get("stream", "") or "-", f"{d['balance']:,.2f}"), tags=(tag,))
+
+    def _on_sort_column(self, tree, col):
+        reverse = getattr(tree, "_sorted_reverse", False)
+        if getattr(tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(tree, col, reverse)

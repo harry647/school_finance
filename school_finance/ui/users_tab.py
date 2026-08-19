@@ -21,7 +21,7 @@ from models.user import (
 from ui.constants import (
     DANGER, FONT_BODY, FONT_BODY_ITALIC, FONT_HEADER_BOLD, FONT_MUTED,
     MUTED_FG, PAD_MD, PAD_SM, PAD_XS, PRIMARY, SUCCESS, SURFACE,
-    ZEBRA_EVEN, ZEBRA_ODD,
+    ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column,
 )
 from utils.validation import validate_password, validate_username, validate_role
 
@@ -77,13 +77,20 @@ class UsersTab(ttk.Frame):
         columns = ("id", "full_name", "username", "role", "status",
                    "last_login", "created_at")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", height=18)
-        self.tree.heading("id", text="ID")
-        self.tree.heading("full_name", text="Full Name")
-        self.tree.heading("username", text="Username")
-        self.tree.heading("role", text="Role")
-        self.tree.heading("status", text="Status")
-        self.tree.heading("last_login", text="Last Login")
-        self.tree.heading("created_at", text="Created")
+        self.tree.heading("id", text="ID",
+                          command=lambda c="id": self._on_sort_column(c))
+        self.tree.heading("full_name", text="Full Name",
+                          command=lambda c="full_name": self._on_sort_column(c))
+        self.tree.heading("username", text="Username",
+                          command=lambda c="username": self._on_sort_column(c))
+        self.tree.heading("role", text="Role",
+                          command=lambda c="role": self._on_sort_column(c))
+        self.tree.heading("status", text="Status",
+                          command=lambda c="status": self._on_sort_column(c))
+        self.tree.heading("last_login", text="Last Login",
+                          command=lambda c="last_login": self._on_sort_column(c))
+        self.tree.heading("created_at", text="Created",
+                          command=lambda c="created_at": self._on_sort_column(c))
 
         self.tree.column("id", width=35, anchor="center")
         self.tree.column("full_name", width=160, anchor="w")
@@ -147,6 +154,12 @@ class UsersTab(ttk.Frame):
 
     def _apply_filter(self):
         self.refresh()
+
+    def _on_sort_column(self, col):
+        reverse = getattr(self.tree, "_sorted_reverse", False)
+        if getattr(self.tree, "_sorted_col", None) == col:
+            reverse = not reverse
+        sort_treeview_column(self.tree, col, reverse)
 
     def get_selected_user_id(self):
         sel = self.tree.selection()
