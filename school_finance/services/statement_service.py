@@ -30,6 +30,7 @@ from db.database import BASE_DIR, get_connection
 from models.school import get_school_info
 from models.payment import list_payments_for_student, list_charges_for_student
 from models.student import calculate_student_balances, get_balance, get_term_balance
+from models.student_credits import get_available_credit
 
 STATEMENTS_DIR = os.path.join(BASE_DIR, "statements")
 
@@ -253,6 +254,7 @@ def generate_statement(student, term_id=None, year=None, generated_by_role=None)
     all_charges = list_charges_for_student(student["id"])
     all_payments = list_payments_for_student(student["id"])
     balance = get_balance(student["id"])
+    credit_balance = get_available_credit(student["id"])
 
     term_balances = calculate_student_balances(student["id"])
 
@@ -409,7 +411,7 @@ def generate_statement(student, term_id=None, year=None, generated_by_role=None)
     c.drawCentredString(width / 2, y - 7 * mm, "STUDENT FEE STATEMENT")
 
     # Status badge (right side of bar)
-    status = "PAID" if balance == 0 else ("OUTSTANDING" if balance > 0 else "CREDIT")
+    status = "CREDIT" if credit_balance > 0 else ("PAID" if balance == 0 else "OUTSTANDING")
     badge_w = 32 * mm
     badge_h = 7 * mm
     _draw_status_badge(
@@ -632,6 +634,8 @@ def generate_statement(student, term_id=None, year=None, generated_by_role=None)
     totals_lines = 3  # gross, payments, balance
     if total_waiver > 0:
         totals_lines += 2  # waiver + net
+    if credit_balance > 0:
+        totals_lines += 1  # credit line
     totals_h = totals_lines * 6 * mm + 9 * mm
     _draw_shaded_panel(c, x, table_y - totals_h, w, totals_h)
 
@@ -667,12 +671,23 @@ def generate_statement(student, term_id=None, year=None, generated_by_role=None)
     c.drawRightString(x + w - 5 * mm, cur_y,
                       f"KSh {total_credit:,.2f}")
 
+    # Account Credit (if any)
+    if credit_balance > 0:
+        cur_y -= line_h
+        c.setFont("Helvetica", 10)
+        c.setFillColor(colors.HexColor("#1565C0"))
+        c.drawString(x + 5 * mm, cur_y, "Account Credit (Overpayment):")
+        c.drawRightString(x + w - 5 * mm, cur_y,
+                          f"KSh {credit_balance:,.2f}")
+        c.setFillColor(colors.black)
+
     # Outstanding balance — largest/boldest element (visual focal point)
     cur_y -= 8 * mm
     c.saveState()
     c.setFillColor(ACCENT)
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(x + 5 * mm, cur_y, "OUTSTANDING BALANCE:")
+    label = "OUTSTANDING BALANCE:" if balance > 0 else "CREDIT BALANCE:" if credit_balance > 0 else "BALANCE:"
+    c.drawString(x + 5 * mm, cur_y, label)
     c.drawRightString(x + w - 5 * mm, cur_y,
                       f"KSh {balance:,.2f}")
     c.restoreState()

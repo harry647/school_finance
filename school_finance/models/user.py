@@ -28,12 +28,12 @@ ROLE_PERMISSIONS = {
     "Admin": {
         "can_delete_student", "can_manage_users", "can_backup",
         "can_import", "can_record_payment", "can_generate_statement",
-        "can_manage_waivers", "can_manage_fee_structure",
+        "can_manage_waivers", "can_manage_fee_structure", "can_manage_credits",
     },
     "Bursar": {
         "can_delete_student", "can_import", "can_record_payment",
         "can_generate_statement", "can_backup", "can_manage_waivers",
-        "can_manage_fee_structure",
+        "can_manage_fee_structure", "can_manage_credits",
     },
     "Clerk": {
         "can_record_payment", "can_generate_statement",

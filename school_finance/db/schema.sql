@@ -148,3 +148,18 @@ CREATE INDEX IF NOT EXISTS idx_payment_allocations_payment ON payment_allocation
 CREATE INDEX IF NOT EXISTS idx_payment_allocations_charge ON payment_allocations(charge_id);
 CREATE INDEX IF NOT EXISTS idx_waivers_student ON waivers(student_id);
 CREATE INDEX IF NOT EXISTS idx_waivers_charge ON waivers(charge_id);
+
+CREATE TABLE IF NOT EXISTS student_credits (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id      INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+    amount          REAL NOT NULL CHECK (amount > 0),
+    remaining       REAL NOT NULL CHECK (remaining >= 0),
+    reason          TEXT DEFAULT 'Overpayment',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    reimbursed      INTEGER NOT NULL DEFAULT 0,
+    reimbursed_at   TEXT,
+    reimbursed_by   TEXT,
+    notes           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_student_credits_student ON student_credits(student_id);

@@ -204,6 +204,23 @@ def _run_migrations(conn):
     bulk_cols = [r["name"] for r in conn.execute("PRAGMA table_info(bulk_payments)").fetchall()]
     if "receipt_no" not in bulk_cols:
         conn.execute("ALTER TABLE bulk_payments ADD COLUMN receipt_no TEXT")
+    if "student_credits" not in tables:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS student_credits (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id      INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                amount          REAL NOT NULL CHECK (amount > 0),
+                remaining       REAL NOT NULL CHECK (remaining >= 0),
+                reason          TEXT DEFAULT 'Overpayment',
+                created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+                reimbursed      INTEGER NOT NULL DEFAULT 0,
+                reimbursed_at   TEXT,
+                reimbursed_by   TEXT,
+                notes           TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_student_credits_student
+                ON student_credits(student_id);
+        """)
     conn.commit()
 
 

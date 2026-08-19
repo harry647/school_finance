@@ -75,6 +75,7 @@ def _allocate_payment_fifo(conn, payment_id, student_id, payment_amount):
             (payment_id, charge["id"], allocation),
         )
         remaining_payment -= allocation
+    return remaining_payment
 
 
 def add_payment(student_id, amount, method, term_id=None, mpesa_code=None,
@@ -99,7 +100,10 @@ def add_payment(student_id, amount, method, term_id=None, mpesa_code=None,
          date_paid, received_by, receipt_no),
     )
     payment_id = cur.lastrowid
-    _allocate_payment_fifo(conn, payment_id, student_id, amount)
+    remaining = _allocate_payment_fifo(conn, payment_id, student_id, amount)
+    if remaining > 0.005:
+        from models.student_credits import add_credit
+        add_credit(student_id, round(remaining, 2), reason="Overpayment")
     conn.commit()
     return payment_id, receipt_no
 

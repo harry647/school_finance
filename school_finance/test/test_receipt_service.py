@@ -62,12 +62,14 @@ class TestReceiptService(unittest.TestCase):
         self.assertEqual(_sanitize_filename("../../../"), "receipt")
 
     def test_compute_status(self):
-        """Status badge logic covers PAID, PARTIAL, and BALANCE DUE."""
+        """Status badge logic covers PAID, PARTIAL, BALANCE DUE, and CREDIT."""
         self.assertEqual(_compute_status(0, 1000), "PAID")
         self.assertEqual(_compute_status(-50, 1000), "PAID")
         self.assertEqual(_compute_status(500, 1000), "PARTIAL")
         self.assertEqual(_compute_status(1000, 1000), "BALANCE DUE")
         self.assertEqual(_compute_status(1500, 1000), "BALANCE DUE")
+        self.assertEqual(_compute_status(0, 1000, credit_balance=500), "CREDIT")
+        self.assertEqual(_compute_status(500, 1000, credit_balance=200), "CREDIT")
 
     def test_format_date_valid(self):
         """Date formatting handles standard SQLite datetime formats."""

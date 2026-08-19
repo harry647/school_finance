@@ -121,8 +121,10 @@ def _draw_status_badge(c, x, y, status, width=28 * mm, height=6 * mm):
     c.restoreState()
 
 
-def _compute_status(balance_after, total_fee):
-    """Compute payment status label from balance and total fee."""
+def _compute_status(balance_after, total_fee, credit_balance=0.0):
+    """Compute payment status label from balance, total fee, and credit."""
+    if credit_balance > 0:
+        return "CREDIT"
     if balance_after <= 0:
         return "PAID"
     if total_fee > 0 and balance_after >= total_fee:
@@ -267,7 +269,9 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     total_fee = current_term_net + previous_balance
     # gross_total preserves the original required amount for display
     gross_total = current_term_gross + previous_balance
-    status = _compute_status(balance_after, total_fee)
+    from models.student_credits import get_available_credit
+    credit_balance = get_available_credit(payment["student_id"])
+    status = _compute_status(balance_after, total_fee, credit_balance)
 
     # Previous Payments = all prior non-voided payments received before this
     # receipt (money already collected toward the account, shown in the
@@ -521,6 +525,8 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     rows.append(("item", "Total Payable (up to current term)", total_fee))
     rows.append(("item", "Previous Payments", prev_paid))
     rows.append(("item", "Current Payment", payment["amount"]))
+    if credit_balance > 0:
+        rows.append(("credit", "   Account Credit (Overpayment)", -credit_balance))
     rows.append(("BALANCE", "CURRENT OUTSTANDING BALANCE:", balance_after))
 
     # Compact per-row spacing so the taller block still fits on one A5 page

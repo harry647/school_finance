@@ -22,6 +22,7 @@ from ui.fees_tab import FeesTab
 from ui.users_tab import UsersTab
 from ui.waivers_tab import WaiversTab
 from ui.bulk_payments_tab import BulkPaymentsTab
+from ui.credits_tab import CreditsTab
 
 GEOMETRY_FILE = os.path.join(BASE_DIR, "window_geometry.json")
 
@@ -305,6 +306,12 @@ class MainWindow(tk.Toplevel):
         except Exception as e:
             logger.error("Failed to create BulkPaymentsTab: %s", e, exc_info=True)
             raise
+        try:
+            self.credits_tab = CreditsTab(self.notebook, self) \
+                if self.has_permission("can_manage_credits") else None
+        except Exception as e:
+            logger.error("Failed to create CreditsTab: %s", e, exc_info=True)
+            raise
 
         self.notebook.add(self.dashboard_tab, text="Dashboard")
         self.notebook.add(self.students_tab, text="Students")
@@ -321,6 +328,8 @@ class MainWindow(tk.Toplevel):
             self.notebook.add(self.waivers_tab, text="Partial Waivers")
         if self.bulk_payments_tab is not None:
             self.notebook.add(self.bulk_payments_tab, text="Bulk Payments")
+        if self.credits_tab is not None:
+            self.notebook.add(self.credits_tab, text="Student Credits")
         self.notebook.add(self.settings_tab, text="Settings")
 
     def refresh_all(self):
@@ -337,6 +346,8 @@ class MainWindow(tk.Toplevel):
             self.waivers_tab.refresh()
         if self.bulk_payments_tab is not None:
             self.bulk_payments_tab.refresh()
+        if self.credits_tab is not None:
+            self.credits_tab.refresh()
         self.settings_tab.refresh()
         self.update_status_bar()
 

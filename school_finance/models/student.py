@@ -171,9 +171,24 @@ def calculate_student_balances(student_id):
             remaining -= allocation
             term_paid[charge["term_id"]] = term_paid.get(charge["term_id"], 0.0) + allocation
 
+    from models.student_credits import get_available_credit
+    available_credit = get_available_credit(student_id)
+    term_credited = {}
+    remaining_credit = available_credit
+    for charge in charges:
+        if remaining_credit <= 0:
+            break
+        if charge_remaining[charge["id"]] <= 0:
+            continue
+        term_id = charge["term_id"]
+        take = min(remaining_credit, charge_remaining[charge["id"]])
+        charge_remaining[charge["id"]] -= take
+        remaining_credit -= take
+        term_credited[term_id] = term_credited.get(term_id, 0.0) + take
+
     term_balances = {}
-    for term_id in set(list(term_charges.keys()) + list(term_paid.keys())):
-        balance = term_charges.get(term_id, 0.0) - term_paid.get(term_id, 0.0)
+    for term_id in set(list(term_charges.keys()) + list(term_paid.keys()) + list(term_credited.keys())):
+        balance = term_charges.get(term_id, 0.0) - term_paid.get(term_id, 0.0) - term_credited.get(term_id, 0.0)
         term_balances[term_id] = round(balance, 2)
 
     return term_balances
@@ -344,7 +359,8 @@ def list_defaulters(min_balance=0, grade=None, limit=None):
         "SELECT s.*, "
         "COALESCE((SELECT SUM(amount) FROM charges WHERE student_id = s.id), 0) - "
         "COALESCE((SELECT SUM(amount) FROM waivers WHERE student_id = s.id AND revoked_at IS NULL), 0) - "
-        "COALESCE((SELECT SUM(amount) FROM payments WHERE student_id = s.id AND voided = 0), 0) AS balance "
+        "COALESCE((SELECT SUM(amount) FROM payments WHERE student_id = s.id AND voided = 0), 0) - "
+        "COALESCE((SELECT SUM(remaining) FROM student_credits WHERE student_id = s.id AND reimbursed = 0), 0) AS balance "
         "FROM students s "
         "WHERE s.status = 'Active' AND s.fee_waived = 0 "
         "GROUP BY s.id "

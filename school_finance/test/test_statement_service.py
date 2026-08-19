@@ -200,6 +200,7 @@ class TestStatementService(unittest.TestCase):
 
     def test_generate_statement_credit(self):
         """Statement shows CREDIT status when balance is negative (overpayment)."""
+        from models.student_credits import get_available_credit
         student_id = add_student("Credit Student", "Grade 9", admission_no="C001")
         term_id = get_or_create_term(2026, "Term III")
         add_charge(student_id, 1000.0, term_id, "Term fee")
@@ -207,7 +208,8 @@ class TestStatementService(unittest.TestCase):
 
         student = get_student(student_id)
         bal = get_balance(student_id)
-        self.assertEqual(bal, 0.0)  # get_balance clamps to 0 for negative terms
+        self.assertEqual(bal, 0.0)
+        self.assertEqual(get_available_credit(student_id), 500.0)
 
         path = generate_statement(student)
         self.assertTrue(os.path.exists(path))
