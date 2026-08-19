@@ -492,110 +492,476 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     y -= (11 * mm if has_detail else 5 * mm) + PAD_SM
 
     # ================================================================
-    # AMOUNTS PANEL (shaded) — FEE BREAKDOWN + ACCOUNT FINANCIAL SUMMARY
-    # Template alignment (single term fee, no itemised description, so the
-    # breakdown is the total to be paid minus any waiver):
+    # AMOUNTS PANEL — PROFESSIONAL HALF-A4 RECEIPT LAYOUT
+    #
+    # Structure:
+    #
     #   FEE BREAKDOWN
-    #     1. Term Fee (Term, Year)      KSh gross
-    #     Less: Fee Waiver              KSh (waiver)      [if any]
-    #     Net Amount Due                KSh net
-    #   TOTAL AMOUNT PAID THIS RECEIPT  KSh amount
+    #       Term Fee                         KSh gross
+    #       Less: Fee Waiver                KSh waiver   [if any]
+    #       Previous Balance                KSh balance  [if any]
+    #       ----------------------------------------------------------
+    #       TOTAL AMOUNT DUE                KSh total
+    #
+    #   AMOUNT PAID THIS RECEIPT            KSh payment
+    #
     #   ACCOUNT FINANCIAL SUMMARY
-    #     Total Payable (up to current term)  KSh net + previous balance
-    #     Previous Payments                  KSh prior payments
-    #     Current Payment                    KSh amount
-    #   CURRENT OUTSTANDING BALANCE           KSh balance_after
+    #       Total Payable                   KSh total
+    #       Previous Payments               KSh previous payments
+    #       Current Payment                 KSh current payment
+    #
+    #       CURRENT OUTSTANDING BALANCE     KSh balance
+    #
+    #   AMOUNT IN WORDS:
+    #       Kenya Shillings ...
     # ================================================================
+
     has_waiver = current_term_waiver > 0
 
+    # ------------------------------------------------
+    # BUILD ROWS
+    # ------------------------------------------------
+
     rows = []  # (kind, label, value)
+
+    # ================================================================
+    # FEE BREAKDOWN
+    # ================================================================
+
     rows.append(("HEAD", "FEE BREAKDOWN", ""))
+
     if term_name != "N/A":
-        row_title = f"1. Term Fee ({term_name}, {year})"
+        row_title = f"Term Fee — {term_name}, {year}"
     else:
-        row_title = "1. Term Fee"
+        row_title = "Term Fee"
+
     rows.append(("item", row_title, current_term_gross))
+
+    # Fee waiver, if applicable
     if has_waiver:
-        rows.append(("credit", "   Less: Fee Waiver", -current_term_waiver))
-    rows.append(("item", "   Net Amount Due", current_term_net))
+        rows.append(("credit", "Less: Fee Waiver", -current_term_waiver))
+
+    # Previous balance is displayed separately
     if previous_balance > 0:
-        rows.append(("sub", "   (Includes Previous Balance)", previous_balance))
-    rows.append(("TOTALPAID", "TOTAL AMOUNT PAID THIS RECEIPT:", payment["amount"]))
+        rows.append(("item", "Previous Balance", previous_balance))
+
+    # Total amount due
+    rows.append(("TOTALDUE", "TOTAL AMOUNT DUE", total_fee))
+
+    # ================================================================
+    # CURRENT PAYMENT
+    # ================================================================
+
+    rows.append((
+        "TOTALPAID",
+        "AMOUNT PAID THIS RECEIPT",
+        payment["amount"]
+    ))
+
+    # ================================================================
+    # ACCOUNT FINANCIAL SUMMARY
+    # ================================================================
 
     rows.append(("HEAD", "ACCOUNT FINANCIAL SUMMARY", ""))
-    rows.append(("item", "Total Payable (up to current term)", total_fee))
-    rows.append(("item", "Previous Payments", prev_paid))
-    rows.append(("item", "Current Payment", payment["amount"]))
+
+    rows.append((
+        "item",
+        "Total Payable",
+        total_fee
+    ))
+
+    rows.append((
+        "item",
+        "Previous Payments",
+        prev_paid
+    ))
+
+    rows.append((
+        "item",
+        "Current Payment",
+        payment["amount"]
+    ))
+
+    # Account credit, if applicable
     if credit_balance > 0:
-        rows.append(("credit", "   Account Credit (Overpayment)", -credit_balance))
-    rows.append(("BALANCE", "CURRENT OUTSTANDING BALANCE:", balance_after))
+        rows.append((
+            "credit",
+            "Account Credit (Overpayment)",
+            -credit_balance
+        ))
 
-    # Compact per-row spacing so the taller block still fits on one A5 page
+    # Outstanding balance
+    rows.append((
+        "BALANCE",
+        "CURRENT OUTSTANDING BALANCE",
+        balance_after
+    ))
+
+
+    # ================================================================
+    # ROW HEIGHTS
+    # ================================================================
+
     row_h = {
-        "HEAD": 3.5 * mm,
-        "item": 3.2 * mm,
-        "credit": 3.2 * mm,
-        "sub": 3.2 * mm,
-        "TOTALPAID": 4.2 * mm,
-        "BALANCE": 5.5 * mm,
+        "HEAD": 5.0 * mm,
+        "item": 4.0 * mm,
+        "credit": 4.0 * mm,
+        "TOTALDUE": 5.0 * mm,
+        "TOTALPAID": 6.0 * mm,
+        "BALANCE": 9.0 * mm,
     }
-    amounts_h = sum(row_h[k] for k, _, _ in rows) + 4.5 * mm
-    _draw_shaded_panel(c, x, y - amounts_h, w, amounts_h)
 
-    cur_y = y - 4.8 * mm
+
+    # ================================================================
+    # CALCULATE PANEL HEIGHT
+    # ================================================================
+
+    amounts_h = (
+        sum(row_h[kind] for kind, _, _ in rows)
+        + 6.0 * mm
+    )
+
+
+    # ================================================================
+    # DRAW MAIN SHADED PANEL
+    # ================================================================
+
+    _draw_shaded_panel(
+        c,
+        x,
+        y - amounts_h,
+        w,
+        amounts_h
+    )
+
+
+    # ================================================================
+    # START DRAWING ROWS
+    # ================================================================
+
+    cur_y = y - 5.5 * mm
+
+
     for kind, label, value in rows:
+
+        # ============================================================
+        # SECTION HEADER
+        # ============================================================
+
         if kind == "HEAD":
-            c.setFont("Helvetica-Bold", 8.5)
+
+            c.saveState()
+
             c.setFillColor(ACCENT)
-            c.drawString(x + 5 * mm, cur_y, label)
-            c.setFillColor(TEXT_DARK)
+            c.setFont(
+                "Helvetica-Bold",
+                8.5
+            )
+
+            c.drawString(
+                x + 5 * mm,
+                cur_y,
+                label
+            )
+
+            # Thin separator below heading
             _draw_accent_rule(
-                c, x + 5 * mm, cur_y - 1.5 * mm, x + w - 5 * mm,
-                color=colors.HexColor("#B7CFE6"), width=0.8,
+                c,
+                x + 5 * mm,
+                cur_y - 1.7 * mm,
+                x + w - 5 * mm,
+                color=colors.HexColor("#B7CFE6"),
+                width=0.7
             )
-        elif kind == "BALANCE":
-            c.saveState()
-            c.setFillColor(ACCENT)
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(x + 5 * mm, cur_y, label)
-            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
+
             c.restoreState()
-        elif kind == "TOTALPAID":
+
+
+        # ============================================================
+        # TOTAL AMOUNT DUE
+        # ============================================================
+
+        elif kind == "TOTALDUE":
+
             c.saveState()
-            c.setFillColor(ACCENT)
-            c.setFont("Helvetica-Bold", 9.5)
-            c.drawString(x + 5 * mm, cur_y, label)
-            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
-            c.restoreState()
-        elif kind == "credit":
-            c.setFont("Helvetica", 9)
-            c.setFillColor(colors.HexColor("#2E7D32"))  # green for credit
-            c.drawString(x + 5 * mm, cur_y, label)
-            c.drawRightString(
-                x + w - 5 * mm, cur_y,
-                f"KSh ({abs(value):,.2f})",
+
+            # Separator line above total
+            c.setStrokeColor(
+                colors.HexColor("#B7CFE6")
             )
+            c.setLineWidth(0.7)
+
+            c.line(
+                x + 5 * mm,
+                cur_y + 1.5 * mm,
+                x + w - 5 * mm,
+                cur_y + 1.5 * mm
+            )
+
             c.setFillColor(TEXT_DARK)
-        elif kind == "sub":
-            c.setFont("Helvetica-Oblique", 8.5)
-            c.drawString(x + 5 * mm, cur_y, label)
-            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
-        else:  # item
-            c.setFont("Helvetica", 9)
-            c.drawString(x + 5 * mm, cur_y, label)
-            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
+
+            c.setFont(
+                "Helvetica-Bold",
+                9
+            )
+
+            c.drawString(
+                x + 5 * mm,
+                cur_y - 2.5 * mm,
+                label
+            )
+
+            c.drawRightString(
+                x + w - 5 * mm,
+                cur_y - 2.5 * mm,
+                f"KSh {value:,.2f}"
+            )
+
+            c.restoreState()
+
+
+        # ============================================================
+        # AMOUNT PAID THIS RECEIPT
+        # ============================================================
+
+        elif kind == "TOTALPAID":
+
+            c.saveState()
+
+            # Light accent background
+            c.setFillColor(
+                colors.HexColor("#EAF2F8")
+            )
+            c.setStrokeColor(
+                colors.HexColor("#B7CFE6")
+            )
+            c.setLineWidth(0.7)
+
+            c.roundRect(
+                x + 3 * mm,
+                cur_y - 4.5 * mm,
+                w - 6 * mm,
+                6.5 * mm,
+                1.2 * mm,
+                fill=1,
+                stroke=1
+            )
+
+            c.setFillColor(ACCENT)
+
+            c.setFont(
+                "Helvetica-Bold",
+                9.5
+            )
+
+            c.drawString(
+                x + 6 * mm,
+                cur_y - 2.5 * mm,
+                label
+            )
+
+            c.drawRightString(
+                x + w - 6 * mm,
+                cur_y - 2.5 * mm,
+                f"KSh {value:,.2f}"
+            )
+
+            c.restoreState()
+
+
+        # ============================================================
+        # CURRENT OUTSTANDING BALANCE
+        # ============================================================
+
+        elif kind == "BALANCE":
+
+            c.saveState()
+
+            # Stronger highlighted balance box
+            c.setFillColor(
+                colors.HexColor("#E6F0FA")
+            )
+
+            c.setStrokeColor(
+                ACCENT
+            )
+
+            c.setLineWidth(0.9)
+
+            c.roundRect(
+                x + 3 * mm,
+                cur_y - 6.0 * mm,
+                w - 6 * mm,
+                8.5 * mm,
+                1.5 * mm,
+                fill=1,
+                stroke=1
+            )
+
+            c.setFillColor(ACCENT)
+
+            c.setFont(
+                "Helvetica-Bold",
+                9.5
+            )
+
+            c.drawString(
+                x + 6 * mm,
+                cur_y - 2.5 * mm,
+                label
+            )
+
+            c.drawRightString(
+                x + w - 6 * mm,
+                cur_y - 2.5 * mm,
+                f"KSh {value:,.2f}"
+            )
+
+            c.restoreState()
+
+
+        # ============================================================
+        # CREDIT / WAIVER
+        # ============================================================
+
+        elif kind == "credit":
+
+            c.saveState()
+
+            c.setFillColor(
+                colors.HexColor("#2E7D32")
+            )
+
+            c.setFont(
+                "Helvetica",
+                8.5
+            )
+
+            c.drawString(
+                x + 5 * mm,
+                cur_y,
+                label
+            )
+
+            c.drawRightString(
+                x + w - 5 * mm,
+                cur_y,
+                f"KSh ({abs(value):,.2f})"
+            )
+
+            c.restoreState()
+
+
+        # ============================================================
+        # NORMAL FINANCIAL ROW
+        # ============================================================
+
+        else:
+
+            c.saveState()
+
+            c.setFillColor(TEXT_DARK)
+
+            c.setFont(
+                "Helvetica",
+                8.5
+            )
+
+            c.drawString(
+                x + 5 * mm,
+                cur_y,
+                label
+            )
+
+            c.drawRightString(
+                x + w - 5 * mm,
+                cur_y,
+                f"KSh {value:,.2f}"
+            )
+
+            c.restoreState()
+
+
+        # Move to next row
         cur_y -= row_h[kind]
+
+
+    # ================================================================
+    # MOVE BELOW AMOUNTS PANEL
+    # ================================================================
 
     y -= amounts_h + PAD_SM
 
-    amount_words = amount_in_words(payment["amount"])
-    c.setFont("Helvetica-Oblique", 8)
-    words_lines = _wrap_text(c, f"Amount in Words: {amount_words}", "Helvetica-Oblique", 8, w - 10 * mm)
+
+    # ================================================================
+    # AMOUNT IN WORDS
+    # ================================================================
+
+    amount_words = amount_in_words(
+        payment["amount"]
+    )
+
+    words_text = (
+        f"Amount in Words: {amount_words}"
+    )
+
+    # Wrap text to fit half-A4 width
+    words_lines = _wrap_text(
+        c,
+        words_text,
+        "Helvetica-Oblique",
+        7.5,
+        w - 10 * mm
+    )
+
+
+    # Calculate words panel height
+    words_h = max(
+        8 * mm,
+        len(words_lines) * 3.5 * mm + 4 * mm
+    )
+
+
+    # Draw separate amount-in-words panel
+    _draw_shaded_panel(
+        c,
+        x,
+        y - words_h,
+        w,
+        words_h,
+        fill_color=colors.white
+    )
+
+
+    # Draw amount in words
     words_y = y - 4 * mm
+
+    c.saveState()
+
+    c.setFillColor(
+        colors.HexColor("#555555")
+    )
+
+    c.setFont(
+        "Helvetica-Oblique",
+        7.5
+    )
+
     for line in words_lines:
-        c.drawString(x + 5 * mm, words_y, line)
+
+        c.drawString(
+            x + 5 * mm,
+            words_y,
+            line
+        )
+
         words_y -= 3.5 * mm
-    y = words_y - 1 * mm
+
+    c.restoreState()
+
+
+    # Move below amount-in-words panel
+    y = y - words_h - PAD_SM
 
     # ================================================================
     # SIGNATURE + QR CODE

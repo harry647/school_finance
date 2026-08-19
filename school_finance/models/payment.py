@@ -272,8 +272,9 @@ def list_charges_for_student(student_id):
 def list_recent_payments(limit=50, student_id=None, term_id=None, method=None,
                          date_from=None, date_to=None):
     conn = get_connection()
-    query = ("SELECT p.*, s.full_name, s.grade FROM payments p "
+    query = ("SELECT p.*, s.full_name, s.grade, t.term_name, t.year FROM payments p "
              "JOIN students s ON p.student_id = s.id "
+             "LEFT JOIN terms t ON p.term_id = t.id "
              "WHERE p.voided = 0 ")
     params = []
     if student_id is not None:
