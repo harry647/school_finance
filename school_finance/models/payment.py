@@ -6,6 +6,60 @@ from models.term import get_current_term
 VALID_METHODS = ("Cash", "M-Pesa", "Bank", "In-Kind")
 
 
+def amount_in_words(amount):
+    """Convert a numeric amount to Kenyan Shillings in words.
+
+    Examples:
+        500.00    -> Kenya Shillings Five Hundred Only
+        12550.50  -> Kenya Shillings Twelve Thousand Five Hundred Fifty and Fifty Cents Only
+    """
+    if amount is None:
+        return "Zero Kenya Shillings Only"
+
+    amount = round(float(amount), 2)
+    if amount == 0:
+        return "Zero Kenya Shillings Only"
+
+    whole = int(amount)
+    cents = int(round((amount - whole) * 100))
+
+    ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+            "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+            "Seventeen", "Eighteen", "Nineteen"]
+    tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+
+    def two_digit(n):
+        if n < 20:
+            return ones[n]
+        return f"{tens[n // 10]} {ones[n % 10]}".strip()
+
+    def three_digit(n):
+        if n < 100:
+            return two_digit(n)
+        return f"{ones[n // 100]} Hundred {two_digit(n % 100)}".strip()
+
+    parts = []
+    remaining = whole
+    if remaining >= 1000000:
+        millions = remaining // 1000000
+        parts.append(f"{three_digit(millions)} Million")
+        remaining %= 1000000
+    if remaining >= 1000:
+        thousands = remaining // 1000
+        parts.append(f"{three_digit(thousands)} Thousand")
+        remaining %= 1000
+    if remaining > 0:
+        parts.append(three_digit(remaining))
+
+    whole_words = " ".join(parts).strip()
+    if not whole_words:
+        whole_words = "Zero"
+
+    if cents == 0:
+        return f"Kenya Shillings {whole_words} Only"
+    return f"Kenya Shillings {whole_words} and {two_digit(cents)} Cents Only"
+
+
 def next_receipt_no():
     """Simple sequential receipt numbers: RCT-000001, RCT-000002, ..."""
     conn = get_connection()

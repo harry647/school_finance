@@ -40,6 +40,7 @@ from models.school import get_school_info
 from models.term import get_term
 from models.fee_structure import get_fee
 from models.student import get_balance, get_term_balance
+from models.payment import amount_in_words
 
 RECEIPTS_DIR = os.path.join(BASE_DIR, "receipts")
 
@@ -586,6 +587,15 @@ def generate_receipt(payment_id, student, term_id, balance_after):
         cur_y -= row_h[kind]
 
     y -= amounts_h + PAD_SM
+
+    amount_words = amount_in_words(payment["amount"])
+    c.setFont("Helvetica-Oblique", 8)
+    words_lines = _wrap_text(c, f"Amount in Words: {amount_words}", "Helvetica-Oblique", 8, w - 10 * mm)
+    words_y = y - 4 * mm
+    for line in words_lines:
+        c.drawString(x + 5 * mm, words_y, line)
+        words_y -= 3.5 * mm
+    y = words_y - 1 * mm
 
     # ================================================================
     # SIGNATURE + QR CODE
