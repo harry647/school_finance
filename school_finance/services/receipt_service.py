@@ -7,6 +7,15 @@ Visual design:
   - QR code encoding the receipt number for authenticity.
   - Consistent vertical rhythm via PAD_XS / PAD_SM / PAD_MD / PAD_LG constants.
 
+Amounts block (template-aligned, compact so it still fits one A5 page):
+  - FEE BREAKDOWN: single term-fee line (no itemised description), the waiver
+    is subtracted (green, shown in parentheses) and Net Amount Due is the
+    total to be paid minus any waiver. A sub-line notes any previous balance.
+  - TOTAL AMOUNT PAID THIS RECEIPT line.
+  - ACCOUNT FINANCIAL SUMMARY: Total Payable (up to the current term),
+    Previous Payments (paid before this receipt), Current Payment, and the
+    CURRENT OUTSTANDING BALANCE as the focal line.
+
 Robustness:
   - Header text is wrapped with c.stringWidth() instead of one fixed line.
   - payment_details footer keeps the true first N lines in original order.
@@ -237,6 +246,16 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     gross_total = current_term_gross + previous_balance
     status = _compute_status(balance_after, total_fee)
 
+    # Previous Payments = all prior non-voided payments received before this
+    # receipt (money already collected toward the account, shown in the
+    # ACCOUNT FINANCIAL SUMMARY block of the template).
+    prev_paid_row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS total FROM payments "
+        "WHERE student_id = ? AND voided = 0 AND id != ?",
+        (payment["student_id"], payment_id),
+    ).fetchone()
+    prev_paid = prev_paid_row["total"] if prev_paid_row else 0.0
+
     # --- Sanitize filename ---
     safe_receipt_no = _sanitize_filename(payment["receipt_no"])
     os.makedirs(RECEIPTS_DIR, exist_ok=True)
@@ -442,82 +461,97 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     y -= (11 * mm if has_detail else 5 * mm) + PAD_SM
 
     # ================================================================
-    # AMOUNTS PANEL (shaded) — Balance is the visual focal point
-    # Layout:
-    #   Total Fee Required:        KSh X
-    #   Less: Fee Waiver:          KSh X   (if waiver exists)
-    #   Net Amount Due:            KSh X   (if waiver exists)
-    #     (Current Term: KSh X)            (if previous balance exists)
-    #     (Previous Balance: KSh X)        (if previous balance exists)
-    #   Amount Paid:               KSh X
-    #   BALANCE:                   KSh X
+    # AMOUNTS PANEL (shaded) — FEE BREAKDOWN + ACCOUNT FINANCIAL SUMMARY
+    # Template alignment (single term fee, no itemised description, so the
+    # breakdown is the total to be paid minus any waiver):
+    #   FEE BREAKDOWN
+    #     1. Term Fee (Term, Year)      KSh gross
+    #     Less: Fee Waiver              KSh (waiver)      [if any]
+    #     Net Amount Due                KSh net
+    #   TOTAL AMOUNT PAID THIS RECEIPT  KSh amount
+    #   ACCOUNT FINANCIAL SUMMARY
+    #     Total Payable (up to current term)  KSh net + previous balance
+    #     Previous Payments                  KSh prior payments
+    #     Current Payment                    KSh amount
+    #   CURRENT OUTSTANDING BALANCE           KSh balance_after
     # ================================================================
-    amounts_lines = 3  # total, paid, balance
     has_waiver = current_term_waiver > 0
+
+    rows = []  # (kind, label, value)
+    rows.append(("HEAD", "FEE BREAKDOWN", ""))
+    if term_name != "N/A":
+        row_title = f"1. Term Fee ({term_name}, {year})"
+    else:
+        row_title = "1. Term Fee"
+    rows.append(("item", row_title, current_term_gross))
     if has_waiver:
-        amounts_lines += 2  # waiver line + net line
+        rows.append(("credit", "   Less: Fee Waiver", -current_term_waiver))
+    rows.append(("item", "   Net Amount Due", current_term_net))
     if previous_balance > 0:
-        amounts_lines += 2  # current term breakdown + previous balance
-    # 6mm per line + 8mm top padding + 8mm gap before balance + 5mm bottom
-    amounts_h = amounts_lines * 6 * mm + 9 * mm
+        rows.append(("sub", "   (Includes Previous Balance)", previous_balance))
+    rows.append(("TOTALPAID", "TOTAL AMOUNT PAID THIS RECEIPT:", payment["amount"]))
+
+    rows.append(("HEAD", "ACCOUNT FINANCIAL SUMMARY", ""))
+    rows.append(("item", "Total Payable (up to current term)", total_fee))
+    rows.append(("item", "Previous Payments", prev_paid))
+    rows.append(("item", "Current Payment", payment["amount"]))
+    rows.append(("BALANCE", "CURRENT OUTSTANDING BALANCE:", balance_after))
+
+    # Compact per-row spacing so the taller block still fits on one A5 page
+    row_h = {
+        "HEAD": 4.2 * mm,
+        "item": 3.6 * mm,
+        "credit": 3.6 * mm,
+        "sub": 3.6 * mm,
+        "TOTALPAID": 5.0 * mm,
+        "BALANCE": 7.0 * mm,
+    }
+    amounts_h = sum(row_h[k] for k, _, _ in rows) + 4.5 * mm
     _draw_shaded_panel(c, x, y - amounts_h, w, amounts_h)
 
-    line_h = 6 * mm
-    fee_y = y - 8 * mm
-    cur_y = fee_y
-
-    # --- Total Fee Required ---
-    c.setFont("Helvetica", 10)
-    c.drawString(x + 5 * mm, cur_y, "Total Fee Required:")
-    c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {gross_total:,.2f}")
-
-    # --- Less: Fee Waiver + Net Amount Due (if waiver exists) ---
-    if has_waiver:
-        cur_y -= line_h
-        c.setFont("Helvetica", 9)
-        c.setFillColor(colors.HexColor("#2E7D32"))  # green for credit
-        c.drawString(x + 5 * mm, cur_y, "Less: Fee Waiver:")
-        c.drawRightString(x + w - 5 * mm, cur_y,
-                          f"KSh {current_term_waiver:,.2f}")
-        c.setFillColor(TEXT_DARK)
-
-        cur_y -= line_h
-        c.drawString(x + 5 * mm, cur_y, "Net Amount Due:")
-        c.drawRightString(x + w - 5 * mm, cur_y,
-                          f"KSh {total_fee:,.2f}")
-
-    # --- Current Term + Previous Balance breakdown (if previous balance) ---
-    if previous_balance > 0:
-        cur_y -= line_h
-        c.setFont("Helvetica", 9)
-        c.drawString(
-            x + 5 * mm, cur_y,
-            f"  (Current Term: KSh {current_term_gross:,.2f})",
-        )
-
-        cur_y -= line_h
-        c.drawString(
-            x + 5 * mm, cur_y,
-            f"  (Previous Balance: KSh {previous_balance:,.2f})",
-        )
-
-    # --- Amount Paid (always on its own line, no overlap) ---
-    cur_y -= line_h
-    c.setFont("Helvetica", 10)
-    c.drawString(x + 5 * mm, cur_y, "Amount Paid:")
-    c.drawRightString(
-        x + w - 5 * mm, cur_y,
-        f"KSh {payment['amount']:,.2f}",
-    )
-
-    # --- Balance line — larger bold font in accent color (focal point) ---
-    cur_y -= 8 * mm
-    c.saveState()
-    c.setFillColor(ACCENT)
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(x + 5 * mm, cur_y, "BALANCE:")
-    c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {balance_after:,.2f}")
-    c.restoreState()
+    cur_y = y - 4.8 * mm
+    for kind, label, value in rows:
+        if kind == "HEAD":
+            c.setFont("Helvetica-Bold", 8.5)
+            c.setFillColor(ACCENT)
+            c.drawString(x + 5 * mm, cur_y, label)
+            c.setFillColor(TEXT_DARK)
+            _draw_accent_rule(
+                c, x + 5 * mm, cur_y - 1.5 * mm, x + w - 5 * mm,
+                color=colors.HexColor("#B7CFE6"), width=0.8,
+            )
+        elif kind == "BALANCE":
+            c.saveState()
+            c.setFillColor(ACCENT)
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(x + 5 * mm, cur_y, label)
+            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
+            c.restoreState()
+        elif kind == "TOTALPAID":
+            c.saveState()
+            c.setFillColor(ACCENT)
+            c.setFont("Helvetica-Bold", 9.5)
+            c.drawString(x + 5 * mm, cur_y, label)
+            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
+            c.restoreState()
+        elif kind == "credit":
+            c.setFont("Helvetica", 9)
+            c.setFillColor(colors.HexColor("#2E7D32"))  # green for credit
+            c.drawString(x + 5 * mm, cur_y, label)
+            c.drawRightString(
+                x + w - 5 * mm, cur_y,
+                f"KSh ({abs(value):,.2f})",
+            )
+            c.setFillColor(TEXT_DARK)
+        elif kind == "sub":
+            c.setFont("Helvetica-Oblique", 8.5)
+            c.drawString(x + 5 * mm, cur_y, label)
+            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
+        else:  # item
+            c.setFont("Helvetica", 9)
+            c.drawString(x + 5 * mm, cur_y, label)
+            c.drawRightString(x + w - 5 * mm, cur_y, f"KSh {value:,.2f}")
+        cur_y -= row_h[kind]
 
     y -= amounts_h + PAD_SM
 
