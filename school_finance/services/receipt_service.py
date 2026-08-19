@@ -469,27 +469,37 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # ================================================================
     # PAYMENT METHOD
     # ================================================================
+    #
+    # The section height is IDENTICAL whether or not a detail line is
+    # drawn.  M-Pesa / In-Kind receipts therefore do NOT push the
+    # amounts panel any lower than Cash / Bank receipts do.
+    #
+    # Previously the extra "TRANSACTION CODE / DESCRIPTION" line cost
+    # an extra 6 mm of vertical space, which made the Amount-in-Words
+    # panel climb up over the bottom of the amounts panel and cover
+    # the CURRENT OUTSTANDING BALANCE row.
+    # ================================================================
     c.setFont("Helvetica-Bold", 8)
     c.drawString(
         x + 5 * mm, y - 5 * mm, f"PAYMENT METHOD: {payment['method']}"
     )
-    has_detail = False
-    if payment["method"] == "M-Pesa" and payment["mpesa_code"]:
-        c.drawString(
-            x + 5 * mm,
-            y - 11 * mm,
-            f"TRANSACTION CODE: {payment['mpesa_code']}",
-        )
-        has_detail = True
-    elif payment["method"] == "In-Kind" and payment["in_kind_desc"]:
-        c.drawString(
-            x + 5 * mm,
-            y - 11 * mm,
-            f"DESCRIPTION: {payment['in_kind_desc']}",
-        )
-        has_detail = True
 
-    y -= (11 * mm if has_detail else 5 * mm) + PAD_SM
+    method_detail = None
+    if payment["method"] == "M-Pesa" and payment["mpesa_code"]:
+        method_detail = f"TRANSACTION CODE: {payment['mpesa_code']}"
+    elif payment["method"] == "In-Kind" and payment["in_kind_desc"]:
+        method_detail = f"DESCRIPTION: {payment['in_kind_desc']}"
+
+    if method_detail:
+        c.setFont("Helvetica", 7.5)
+        c.drawString(
+            x + 5 * mm,
+            y - 9.5 * mm,
+            method_detail,
+        )
+
+    # Fixed 8 mm budget for every method (two compact lines fit).
+    y -= 8 * mm + PAD_SM
 
     # ================================================================
     # AMOUNTS PANEL — PROFESSIONAL HALF-A4 RECEIPT LAYOUT
@@ -768,6 +778,9 @@ def generate_receipt(payment_id, student, term_id, balance_after):
 
             c.restoreState()
 
+            # Extra breathing room before the next section
+            cur_y -= 1.5 * mm
+
 
         # ============================================================
         # CURRENT OUTSTANDING BALANCE
@@ -915,26 +928,86 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     )
 
 
-    # Calculate words panel height
+    # Height of the Amount in Words panel
     words_h = max(
         8 * mm,
         len(words_lines) * 3.5 * mm + 4 * mm
     )
 
 
-    # Draw separate amount-in-words panel
+    # ------------------------------------------------
+    # RESERVE SPACE FOR THE FIXED FOOTER
+    # ------------------------------------------------
+
+    footer_bottom = 6 * mm
+
+
+    # Top of the footer/signature area.
+    # Nothing above this point should overlap the footer.
+    footer_top = footer_bottom + 29 * mm
+
+
+    # Current y is the position immediately below the amounts panel.
+    #
+    # Natural position: the words panel sits right under the amounts
+    # panel.  If it would reach into the reserved footer area, it is
+    # pulled up into the band that runs from the amounts panel down to
+    # the footer and shrunk so it can never overlap the amounts panel.
+    #
+    # That is what keeps Amount in Words from covering the CURRENT
+    # OUTSTANDING BALANCE row -- which used to happen on M-Pesa /
+    # In-Kind receipts because their extra payment-method line ate
+    # 6 mm of vertical space.
+    words_top = y
+    words_bottom = words_top - words_h
+
+    if words_bottom < footer_top:
+
+        # Space available between the amounts panel and the footer.
+        words_band = y - footer_top
+
+        # Only shrink; never let the panel exceed the band.
+        words_h = min(words_h, max(words_band, 8 * mm))
+
+        # Pin the panel bottom to the top of the footer reserve so
+        # the amounts panel and the footer stay cleanly separated.
+        words_top = footer_top + words_h
+        words_bottom = footer_top
+
+
+    # ------------------------------------------------
+    # DRAW AMOUNT-IN-WORDS PANEL
+    # ------------------------------------------------
+
     _draw_shaded_panel(
         c,
         x,
-        y - words_h,
+        words_bottom,
         w,
         words_h,
         fill_color=colors.white
     )
 
 
-    # Draw amount in words
-    words_y = y - 4 * mm
+
+
+    # ------------------------------------------------
+    # DRAW AMOUNT-IN-WORDS TEXT
+    # ------------------------------------------------
+
+    # Use text metrics that fit the clamped panel height so the
+    # words never spill below the panel / into the footer.
+    words_font = 7.5
+    words_line = 3.5 * mm
+    while (
+        len(words_lines) * words_line + 4 * mm > words_h
+        and words_h >= 8 * mm
+        and words_line > 2.0 * mm
+    ):
+        words_line -= 0.3 * mm
+        words_font -= 0.3
+
+    words_y = words_top - 4 * mm
 
     c.saveState()
 
@@ -944,7 +1017,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
 
     c.setFont(
         "Helvetica-Oblique",
-        7.5
+        words_font
     )
 
     for line in words_lines:
@@ -955,13 +1028,18 @@ def generate_receipt(payment_id, student, term_id, balance_after):
             line
         )
 
-        words_y -= 3.5 * mm
+        words_y -= words_line
 
     c.restoreState()
 
 
-    # Move below amount-in-words panel
-    y = y - words_h - PAD_SM
+
+
+    # ------------------------------------------------
+    # Update y
+    # ------------------------------------------------
+
+    y = words_bottom - PAD_SM
 
     # ================================================================
     # FIXED BOTTOM FOOTER AREA
@@ -969,11 +1047,9 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # The footer is positioned from the bottom of the A5 page rather
     # than continuing to subtract from the main "y" position.
     #
-    # This prevents the footer from being cut off when the amounts
-    # panel or Amount-in-Words section becomes taller.
+    # footer_bottom / footer_top were reserved in the AMOUNT IN WORDS
+    # section above, so nothing can overlap the footer area.
     # ================================================================
-
-    footer_bottom = 7 * mm
 
     # ------------------------------------------------
     # THANK-YOU MESSAGE — FIXED AT VERY BOTTOM
@@ -1131,9 +1207,8 @@ def generate_receipt(payment_id, student, term_id, balance_after):
                 signature_path
             ).getSize()
 
-            # Keep signature compact for A5
             max_w = 18 * mm
-            max_h = 7 * mm
+            max_h = 6 * mm
 
             scale = min(
                 max_w / sig_w,
@@ -1153,7 +1228,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
             c.drawImage(
                 signature_path,
                 x + 5 * mm,
-                sig_y + 1 * mm,
+                sig_y + 0.5 * mm,
                 draw_w,
                 draw_h,
                 mask=mask,
@@ -1185,37 +1260,29 @@ def generate_receipt(payment_id, student, term_id, balance_after):
             "Signature: __________________"
         )
 
-    # ------------------------------------------------
+
+    # ================================================================
     # QR CODE
-    # ------------------------------------------------
-    #
-    # QR sits on the bottom-right of the signature area.
-    # ------------------------------------------------
+    # ================================================================
 
-    qr_size = 11 * mm
+    qr_size = 10 * mm
 
-    qr_data = (
-        f"Receipt:{payment['receipt_no']}"
-    )
+    qr_data = f"Receipt:{payment['receipt_no']}"
 
     _draw_qr_code(
         c,
         data=qr_data,
-        x=x + w - qr_size - 3 * mm,
+        x=x + w - qr_size - 4 * mm,
         y=sig_y - qr_size + 1 * mm,
         size=qr_size,
     )
 
 
     # ================================================================
-    # IMPORTANT:
-    # Do NOT continue doing y -= ... for the footer.
-    #
-    # The footer is fixed to the bottom of the A5 page.
+    # KEEP MAIN Y ABOVE THE FOOTER
     # ================================================================
 
-    # Keep y above the footer in case later code uses it.
-    y = footer_bottom + 32 * mm
+    y = footer_top
 
 
     # ================================================================
