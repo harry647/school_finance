@@ -304,10 +304,10 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     c = canvas.Canvas(file_path, pagesize=A5)
     width, height = A5
 
-    margin = 12 * mm
+    margin = 8 * mm
     x = margin
     w = width - 2 * margin
-    y = height - margin  # cursor moving downward
+    y = height - margin # cursor moving downward
 
     # ================================================================
     # DUPLICATE WATERMARK (behind everything, only for reprints)
@@ -325,7 +325,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # HEADER SECTION (dynamic height based on populated fields)
     # ================================================================
     # Compute school name wrapping (needs canvas for stringWidth)
-    name_lines = _wrap_text(c, school_name, "Helvetica-Bold", 13, w - 10 * mm)
+    name_lines = _wrap_text(c, school_name, "Helvetica-Bold", 11, w - 10 * mm)
     name_size = 13
     if len(name_lines) > 2:
         name_size = 11
@@ -379,21 +379,21 @@ def generate_receipt(payment_id, student, term_id, balance_after):
 
     # Motto
     if motto:
-        c.setFont("Helvetica-Oblique", 9)
+        c.setFont("Helvetica-Oblique", 7.5)
         c.drawCentredString(width / 2, text_y, f'"{motto}"')
         text_y -= 5 * mm
 
     # Address (wrapped, centered)
     if address:
-        addr_lines = _wrap_text(c, address, "Helvetica", 9, w - 10 * mm)
-        c.setFont("Helvetica", 9)
+        addr_lines = _wrap_text(c, address, "Helvetica", 7.5, w - 10 * mm)
+        c.setFont("Helvetica", 7.5)
         for line in addr_lines[:2]:
             c.drawCentredString(width / 2, text_y, line)
             text_y -= 4 * mm
 
     # Phone
     if phone:
-        c.setFont("Helvetica", 9)
+        c.setFont("Helvetica", 7.5)
         c.drawCentredString(width / 2, text_y, f"Tel: {phone}")
 
     y -= header_h + PAD_SM
@@ -401,7 +401,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # ================================================================
     # OFFICIAL RECEIPT BAR + STATUS BADGE
     # ================================================================
-    bar_h = 10 * mm
+    bar_h = 8 * mm
     # Accent-tinted fill with accent border
     c.saveState()
     c.setFillColor(ACCENT_LIGHT)
@@ -414,7 +414,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     _draw_accent_rule(c, x, y - bar_h, x + w, color=ACCENT, width=1.5)
 
     # Bar text (black for readability)
-    c.setFont("Helvetica-Bold", 11)
+    c.setFont("Helvetica-Bold", 9)
     c.drawCentredString(width / 2, y - 7 * mm, "OFFICIAL SCHOOL RECEIPT")
 
     # Status badge (right side of bar)
@@ -447,16 +447,16 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # ================================================================
     # STUDENT INFORMATION PANEL (shaded)
     # ================================================================
-    panel_h = 18 * mm
+    panel_h = 17 * mm
     _draw_shaded_panel(c, x, y - panel_h, w, panel_h)
 
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont("Helvetica-Bold", 8)
     c.drawCentredString(width / 2, y - 6 * mm, "STUDENT INFORMATION")
 
     student_class = student["grade"]
     if student.get("stream"):
         student_class = f"{student['grade']} {student['stream']}"
-    c.setFont("Helvetica", 9)
+    c.setFont("Helvetica", 7.5)
     c.drawString(x + 5 * mm, y - 12 * mm, f"Student Name: {student['full_name']}")
     c.drawString(
         x + 5 * mm, y - 16 * mm, f"Admission No: {student['admission_no'] or '-'}"
@@ -468,7 +468,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # ================================================================
     # PAYMENT METHOD
     # ================================================================
-    c.setFont("Helvetica-Bold", 10)
+    c.setFont("Helvetica-Bold", 8)
     c.drawString(
         x + 5 * mm, y - 5 * mm, f"PAYMENT METHOD: {payment['method']}"
     )
@@ -531,12 +531,12 @@ def generate_receipt(payment_id, student, term_id, balance_after):
 
     # Compact per-row spacing so the taller block still fits on one A5 page
     row_h = {
-        "HEAD": 4.2 * mm,
-        "item": 3.6 * mm,
-        "credit": 3.6 * mm,
-        "sub": 3.6 * mm,
-        "TOTALPAID": 5.0 * mm,
-        "BALANCE": 7.0 * mm,
+        "HEAD": 3.5 * mm,
+        "item": 3.2 * mm,
+        "credit": 3.2 * mm,
+        "sub": 3.2 * mm,
+        "TOTALPAID": 4.2 * mm,
+        "BALANCE": 5.5 * mm,
     }
     amounts_h = sum(row_h[k] for k, _, _ in rows) + 4.5 * mm
     _draw_shaded_panel(c, x, y - amounts_h, w, amounts_h)
@@ -610,7 +610,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     if signature_path:
         try:
             sig_w, sig_h = ImageReader(signature_path).getSize()
-            max_w, max_h = 22 * mm, 10 * mm
+            max_w, max_h = 18 * mm, 8 * mm
             scale = min(max_w / sig_w, max_h / sig_h, 1.0)
             draw_w, draw_h = sig_w * scale, sig_h * scale
             mask = "auto" if signature_path.lower().endswith(".png") else None
@@ -634,7 +634,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
         )
 
     # QR code (bottom-right, encodes receipt number for verification)
-    qr_size = 16 * mm
+    qr_size = 12 * mm
     qr_data = f"Receipt:{payment['receipt_no']}"
     _draw_qr_code(
         c,
@@ -644,7 +644,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
         size=qr_size,
     )
 
-    y -= 18 * mm
+    y -= 14 * mm
 
     # ================================================================
     # PAYMENT DETAILS FOOTER (in original order, capped at 4 lines)
