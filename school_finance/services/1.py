@@ -172,28 +172,6 @@ def _draw_dashed_line(c, x1, y, x2):
     c.restoreState()
 
 
-def _resolve_signature(username):
-    """Return a validated signature image path for *username*.
-
-    Looks up the user's ``signature_path`` in the database and verifies the
-    file exists on disk.  Returns ``None`` when no signature is available so
-    the caller can fall back to the dashed-line placeholder.
-    """
-    if not username:
-        return None
-    try:
-        from models.user import get_user_by_username
-        user = get_user_by_username(username.strip())
-    except Exception:
-        return None
-    if not user:
-        return None
-    sig_path = user.get("signature_path")
-    if sig_path and os.path.isfile(sig_path):
-        return sig_path
-    return None
-
-
 def generate_receipt(payment_id, student, term_id, balance_after):
     """Build a PDF receipt for a payment and log it in the receipts table."""
     conn = get_connection()
@@ -203,7 +181,6 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     if payment is None:
         raise ValueError("Payment not found")
 
-    payment = dict(payment)
     student = dict(student)
     term = get_term(term_id) if term_id else None
     term_name = term["term_name"] if term else "N/A"
@@ -333,12 +310,9 @@ def generate_receipt(payment_id, student, term_id, balance_after):
             c, school_name, "Helvetica-Bold", name_size, w - 10 * mm
         )
 
-    # Compute header height: base (logo+name) + 5mm per optional field + padding.
-    # The logo's space is only reserved when a logo actually exists, so a
-    # school with no logo gets a compact header instead of empty white space.
-    has_logo = bool(logo_path and os.path.isfile(logo_path))
+    # Compute header height: base (logo+name) + 5mm per optional field + padding
     optional_count = sum(1 for f in (motto, address, phone) if f)
-    header_h = 22 * mm if has_logo else 10 * mm  # base: logo space (if any) + name
+    header_h = 30 * mm  # base: logo space + name
     if len(name_lines) > 1:
         header_h += 5 * mm  # extra line for wrapped name
     header_h += optional_count * 5 * mm + PAD_SM
@@ -347,7 +321,7 @@ def generate_receipt(payment_id, student, term_id, balance_after):
 
     # Logo (centered at top)
     logo_bottom = y
-    if has_logo:
+    if logo_path and os.path.isfile(logo_path):
         try:
             img_w, img_h = ImageReader(logo_path).getSize()
             max_w, max_h = 28 * mm, 20 * mm
@@ -585,9 +559,6 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     # SIGNATURE + QR CODE
     # ================================================================
     sig_y = y - 5 * mm
-    signature_path = _resolve_signature(payment.get("received_by"))
-
-    # Dashed signature line
     c.saveState()
     c.setStrokeColor(colors.HexColor("#999999"))
     c.setLineWidth(0.5)
@@ -595,37 +566,23 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     c.restoreState()
 
     c.setFont("Helvetica", 9)
+    received_by_username = payment["received_by"]
+    role = None
+    if received_by_username:
+        user_row = conn.execute(
+            "SELECT role FROM users WHERE username = ?", (received_by_username,)
+        ).fetchone()
+        if user_row:
+            role = user_row["role"]
+    received_by_text = f"Received By: {role}" if role else f"Received By: {received_by_username or 'School Bursar'}"
     c.drawString(
         x + 5 * mm,
         sig_y - 5 * mm,
-        "Received By: Bursar",
+        received_by_text,
     )
-
-    if signature_path:
-        try:
-            sig_w, sig_h = ImageReader(signature_path).getSize()
-            max_w, max_h = 22 * mm, 10 * mm
-            scale = min(max_w / sig_w, max_h / sig_h, 1.0)
-            draw_w, draw_h = sig_w * scale, sig_h * scale
-            mask = "auto" if signature_path.lower().endswith(".png") else None
-            c.drawImage(
-                signature_path,
-                x + 5 * mm,
-                sig_y - draw_h - 4 * mm,
-                draw_w,
-                draw_h,
-                mask=mask,
-            )
-        except Exception:
-            c.drawString(
-                x + 5 * mm,
-                sig_y - 11 * mm,
-                "Signature: __________________",
-            )
-    else:
-        c.drawString(
-            x + 5 * mm, sig_y - 11 * mm, "Signature: __________________"
-        )
+    c.drawString(
+        x + 5 * mm, sig_y - 11 * mm, "Signature: __________________"
+    )
 
     # QR code (bottom-right, encodes receipt number for verification)
     qr_size = 16 * mm
@@ -752,9 +709,8 @@ def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
             c, school_name, "Helvetica-Bold", name_size, w - 10 * mm
         )
 
-    has_logo = bool(logo_path and os.path.isfile(logo_path))
     optional_count = sum(1 for f in (motto, address, phone) if f)
-    header_h = 22 * mm if has_logo else 10 * mm
+    header_h = 30 * mm
     if len(name_lines) > 1:
         header_h += 5 * mm
     header_h += optional_count * 5 * mm + PAD_SM
@@ -762,7 +718,7 @@ def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
     _draw_shaded_panel(c, x, y - header_h, w, header_h, fill_color=colors.white)
 
     logo_bottom = y
-    if has_logo:
+    if logo_path and os.path.isfile(logo_path):
         try:
             img_w, img_h = ImageReader(logo_path).getSize()
             max_w, max_h = 28 * mm, 20 * mm
@@ -923,8 +879,6 @@ def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
     # SIGNATURE + QR CODE
     # ================================================================
     sig_y = y - 5 * mm
-    signature_path = _resolve_signature(bulk_payment.get("created_by"))
-
     c.saveState()
     c.setStrokeColor(colors.HexColor("#999999"))
     c.setLineWidth(0.5)
@@ -935,33 +889,11 @@ def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
     c.drawString(
         x + 5 * mm,
         sig_y - 5 * mm,
-        "Received By: Bursar",
+        f"Received By: {bulk_payment.get('created_by') or 'School Bursar'}",
     )
-
-    if signature_path:
-        try:
-            sig_w, sig_h = ImageReader(signature_path).getSize()
-            max_w, max_h = 22 * mm, 10 * mm
-            scale = min(max_w / sig_w, max_h / sig_h, 1.0)
-            draw_w, draw_h = sig_w * scale, sig_h * scale
-            mask = "auto" if signature_path.lower().endswith(".png") else None
-            c.drawImage(
-                signature_path,
-                x + 5 * mm,
-                sig_y - draw_h - 4 * mm,
-                draw_w,
-                draw_h,
-                mask=mask,
-            )
-        except Exception:
-            c.drawString(
-                x + 5 * mm, sig_y - 11 * mm,
-                "Authorised Signature: __________________",
-            )
-    else:
-        c.drawString(
-            x + 5 * mm, sig_y - 11 * mm, "Authorised Signature: __________________"
-        )
+    c.drawString(
+        x + 5 * mm, sig_y - 11 * mm, "Authorised Signature: __________________"
+    )
 
     qr_size = 16 * mm
     qr_data = f"BulkReceipt:{receipt_no}"
