@@ -964,121 +964,266 @@ def generate_receipt(payment_id, student, term_id, balance_after):
     y = y - words_h - PAD_SM
 
     # ================================================================
-    # SIGNATURE + QR CODE
+    # FIXED BOTTOM FOOTER AREA
+    #
+    # The footer is positioned from the bottom of the A5 page rather
+    # than continuing to subtract from the main "y" position.
+    #
+    # This prevents the footer from being cut off when the amounts
+    # panel or Amount-in-Words section becomes taller.
     # ================================================================
-    sig_y = y - 5 * mm
-    signature_path = _resolve_signature(payment.get("received_by"))
 
-    # Dashed signature line
+    footer_bottom = 7 * mm
+
+    # ------------------------------------------------
+    # THANK-YOU MESSAGE — FIXED AT VERY BOTTOM
+    # ------------------------------------------------
+
+    thank_you_y = footer_bottom + 1.5 * mm
+
     c.saveState()
-    c.setStrokeColor(colors.HexColor("#999999"))
-    c.setLineWidth(0.5)
-    c.line(x + 5 * mm, sig_y, x + 70 * mm, sig_y)
-    c.restoreState()
 
-    c.setFont("Helvetica", 9)
-    c.drawString(
-        x + 5 * mm,
-        sig_y - 5 * mm,
-        "Received By: Bursar",
+    c.setFillColor(
+        colors.HexColor("#555555")
     )
 
+    c.setFont(
+        "Helvetica-Oblique",
+        7.5
+    )
+
+    c.drawCentredString(
+        width / 2,
+        thank_you_y + 4 * mm,
+        "Thank you for making your payment."
+    )
+
+    c.drawCentredString(
+        width / 2,
+        thank_you_y,
+        "Please keep this receipt for future reference."
+    )
+
+    c.restoreState()
+
+
+    # ------------------------------------------------
+    # PAYMENT DETAILS
+    # ------------------------------------------------
+    #
+    # Payment details are placed ABOVE the thank-you
+    # message and limited to 3 lines so they cannot
+    # push the footer outside the A5 page.
+    # ------------------------------------------------
+
+    if payment_details:
+
+        lines = []
+
+        for part in payment_details.splitlines():
+
+            part = part.strip()
+
+            while len(part) > 90:
+
+                idx = part.rfind(" ", 0, 90)
+
+                if idx == -1:
+                    idx = 90
+
+                lines.append(part[:idx])
+
+                part = part[idx:].lstrip()
+
+            if part:
+                lines.append(part)
+
+        # Maximum of 3 lines on the compact A5 receipt
+        footer_lines = lines[:3]
+
+        payment_y = footer_bottom + 11 * mm
+
+        c.saveState()
+
+        c.setFillColor(
+            colors.HexColor("#666666")
+        )
+
+        c.setFont(
+            "Helvetica-Oblique",
+            6.8
+        )
+
+        for i, line in enumerate(footer_lines):
+
+            c.drawCentredString(
+                width / 2,
+                payment_y + (
+                    (len(footer_lines) - 1 - i) * 3.0 * mm
+                ),
+                line
+            )
+
+        c.restoreState()
+
+
+    # ================================================================
+    # SIGNATURE + QR CODE
+    # ================================================================
+
+    # Fixed signature area above the payment details
+    sig_y = footer_bottom + 25 * mm
+
+    signature_path = _resolve_signature(
+        payment.get("received_by")
+    )
+
+
+    # ------------------------------------------------
+    # SIGNATURE LINE
+    # ------------------------------------------------
+
+    c.saveState()
+
+    c.setStrokeColor(
+        colors.HexColor("#999999")
+    )
+
+    c.setLineWidth(0.5)
+
+    c.line(
+        x + 5 * mm,
+        sig_y,
+        x + 60 * mm,
+        sig_y
+    )
+
+    c.restoreState()
+
+
+    # ------------------------------------------------
+    # RECEIVED BY
+    # ------------------------------------------------
+
+    c.setFillColor(TEXT_DARK)
+
+    c.setFont(
+        "Helvetica",
+        7.5
+    )
+
+    c.drawString(
+        x + 5 * mm,
+        sig_y - 4 * mm,
+        "Received By: Bursar"
+    )
+
+
+    # ------------------------------------------------
+    # SIGNATURE IMAGE
+    # ------------------------------------------------
+
     if signature_path:
+
         try:
-            sig_w, sig_h = ImageReader(signature_path).getSize()
-            max_w, max_h = 18 * mm, 8 * mm
-            scale = min(max_w / sig_w, max_h / sig_h, 1.0)
-            draw_w, draw_h = sig_w * scale, sig_h * scale
-            mask = "auto" if signature_path.lower().endswith(".png") else None
+
+            sig_w, sig_h = ImageReader(
+                signature_path
+            ).getSize()
+
+            # Keep signature compact for A5
+            max_w = 18 * mm
+            max_h = 7 * mm
+
+            scale = min(
+                max_w / sig_w,
+                max_h / sig_h,
+                1.0
+            )
+
+            draw_w = sig_w * scale
+            draw_h = sig_h * scale
+
+            mask = (
+                "auto"
+                if signature_path.lower().endswith(".png")
+                else None
+            )
+
             c.drawImage(
                 signature_path,
                 x + 5 * mm,
-                sig_y - draw_h - 4 * mm,
+                sig_y + 1 * mm,
                 draw_w,
                 draw_h,
                 mask=mask,
             )
+
         except Exception:
+
+            c.setFont(
+                "Helvetica",
+                7
+            )
+
             c.drawString(
                 x + 5 * mm,
-                sig_y - 11 * mm,
-                "Signature: __________________",
+                sig_y - 8 * mm,
+                "Signature: __________________"
             )
+
     else:
-        c.drawString(
-            x + 5 * mm, sig_y - 11 * mm, "Signature: __________________"
+
+        c.setFont(
+            "Helvetica",
+            7
         )
 
-    # QR code (bottom-right, encodes receipt number for verification)
-    qr_size = 12 * mm
-    qr_data = f"Receipt:{payment['receipt_no']}"
+        c.drawString(
+            x + 5 * mm,
+            sig_y - 8 * mm,
+            "Signature: __________________"
+        )
+
+    # ------------------------------------------------
+    # QR CODE
+    # ------------------------------------------------
+    #
+    # QR sits on the bottom-right of the signature area.
+    # ------------------------------------------------
+
+    qr_size = 11 * mm
+
+    qr_data = (
+        f"Receipt:{payment['receipt_no']}"
+    )
+
     _draw_qr_code(
         c,
         data=qr_data,
-        x=x + w - qr_size - 2 * mm,
-        y=sig_y - qr_size + 2 * mm,
+        x=x + w - qr_size - 3 * mm,
+        y=sig_y - qr_size + 1 * mm,
         size=qr_size,
     )
 
-    y -= 14 * mm
 
     # ================================================================
-    # PAYMENT DETAILS FOOTER (in original order, capped at 4 lines)
+    # IMPORTANT:
+    # Do NOT continue doing y -= ... for the footer.
+    #
+    # The footer is fixed to the bottom of the A5 page.
     # ================================================================
-    if payment_details:
-        lines = []
-        for part in payment_details.splitlines():
-            part = part.strip()
-            while len(part) > 90:
-                idx = part.rfind(" ", 0, 90)
-                if idx == -1:
-                    idx = 90
-                lines.append(part[:idx])
-                part = part[idx:].lstrip()
-            if part:
-                lines.append(part)
-        c.setFont("Helvetica-Oblique", 7)
-        for i, line in enumerate(lines[:4]):
-            c.drawCentredString(
-                width / 2, y - 4 * mm - i * 3.5 * mm, line
-            )
-        y -= 4 * mm + min(len(lines), 4) * 3.5 * mm + PAD_SM
 
-    # ================================================================
-    # THANK YOU FOOTER
-    # ================================================================
-    c.setFont("Helvetica-Oblique", 8)
-    c.drawCentredString(
-        width / 2, y - 4 * mm, "Thank you for making your payment."
-    )
-    c.drawCentredString(
-        width / 2,
-        y - 8 * mm,
-        "Please keep this receipt for future reference.",
-    )
-    y -= 10 * mm
+    # Keep y above the footer in case later code uses it.
+    y = footer_bottom + 32 * mm
+
 
     # ================================================================
     # SAVE
     # ================================================================
+
     c.showPage()
     c.save()
-
-    # --- Log in receipts table (insert or update for reprint tracking) ---
-    if is_reprint:
-        conn.execute(
-            "UPDATE receipts SET file_path = ?, print_count = ? "
-            "WHERE receipt_no = ?",
-            (file_path, print_count, payment["receipt_no"]),
-        )
-    else:
-        conn.execute(
-            "INSERT INTO receipts (payment_id, receipt_no, file_path, print_count) "
-            "VALUES (?, ?, ?, ?)",
-            (payment_id, payment["receipt_no"], file_path, print_count),
-        )
-    conn.commit()
-    return file_path
 
 
 def generate_bulk_receipt(bulk_payment_id, bulk_payment, items):
