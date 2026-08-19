@@ -13,8 +13,15 @@ WARNING = "#F57C00"
 DANGER = "#C62828"
 BORDER = "#E0E0E0"
 MUTED_FG = "#757575"
-PAID_BG = "#ccffcc"
-OVERDUE_BG = "#ffcccc"
+# Student status badge colours (soft pastel backgrounds + readable foregrounds)
+PAID_BG = "#E8F5E9"            # soft green
+PAID_FG = "#2E7D32"
+OVERDUE_BG = "#FDECEA"         # soft red
+OVERDUE_FG = "#C62828"
+WAIVED_BG = "#FFF8E1"          # soft amber
+WAIVED_FG = "#B26A00"
+INACTIVE_BG = "#ECEFF1"        # soft grey for Left / Graduated
+INACTIVE_FG = "#607D8B"
 
 PAD_XS = 4
 PAD_SM = 8
@@ -227,6 +234,12 @@ def sort_treeview_column(tree, col, reverse=False):
 
     def sort_key(item):
         val = item[0][col_index]
+        if isinstance(val, str):
+            # Try numeric (also handles thousands separators like "49,500.00").
+            try:
+                return (0, float(val.replace(",", "")))
+            except (ValueError, TypeError):
+                return (1, val.lower())
         try:
             return (0, float(val))
         except (ValueError, TypeError):

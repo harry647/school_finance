@@ -12,9 +12,12 @@ from models.fee_structure import get_fee, get_missing_fee_structures
 from models.user import log_action
 from services.export_service import export_students, export_waived_students
 from services.pdf_report_service import export_students_pdf
-from ui.constants import (DANGER, FONT_BODY, FONT_BODY_ITALIC, FONT_MUTED,
-                          MUTED_FG, OVERDUE_BG, PAID_BG, PAD_MD, PAD_SM, PAD_XS,
-                          WARNING, ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column)
+from ui.constants import (DANGER, FONT_BODY_ITALIC, FONT_MUTED,
+                          INACTIVE_BG, INACTIVE_FG, MUTED_FG,
+                          OVERDUE_BG, OVERDUE_FG, PAID_BG, PAID_FG,
+                          PAD_MD, PAD_SM, PAD_XS,
+                          WAIVED_BG, WAIVED_FG, WARNING,
+                          ZEBRA_EVEN, ZEBRA_ODD, sort_treeview_column)
 
 
 class StudentsTab(ttk.Frame):
@@ -26,6 +29,16 @@ class StudentsTab(ttk.Frame):
         self.refresh()
 
     def _build_ui(self):
+        title_row = ttk.Frame(self)
+        title_row.pack(fill="x", pady=(0, PAD_SM))
+        ttk.Label(title_row, text="Student Register",
+                  font=("Segoe UI", 15, "bold")).pack(side="left")
+        ttk.Label(title_row,
+                  text="Manage student records, balances and fee waivers",
+                  foreground=MUTED_FG).pack(side="left", padx=(PAD_SM, 0))
+
+        ttk.Separator(self).pack(fill="x", pady=(0, PAD_SM))
+
         top = ttk.Frame(self)
         top.pack(fill="x", pady=(0, PAD_SM))
 
@@ -67,29 +80,47 @@ class StudentsTab(ttk.Frame):
             command=self._auto_promote_all).pack(side="right", padx=PAD_XS)
         self._update_delete_button()
 
-        columns = ("id", "name", "grade", "stream", "admission", "balance", "waived", "remarks")
-        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=18)
-        headings = {"id": "ID", "name": "Full Name", "grade": "Grade",
-                    "stream": "Stream", "admission": "Admission No.", "balance": "Balance (KES)",
-                    "waived": "Waived?", "remarks": "Remarks"}
-        widths = {"id": 40, "name": 180, "grade": 90, "stream": 100,
-                  "admission": 110, "balance": 110, "waived": 70, "remarks": 180}
+        columns = ("id", "name", "grade", "stream", "admission", "balance",
+                   "status", "waived", "remarks")
+        self.tree = ttk.Treeview(self, columns=columns, show="headings",
+                                 height=18, selectmode="browse")
+        headings = {"id": "#", "name": "Student Name", "grade": "Grade",
+                    "stream": "Stream", "admission": "Admission No.",
+                    "balance": "Balance (KES)", "status": "Status",
+                    "waived": "Waiver", "remarks": "Remarks"}
+        widths = {"id": 46, "name": 200, "grade": 70, "stream": 80,
+                  "admission": 112, "balance": 120, "status": 74,
+                  "waived": 66, "remarks": 170}
+        center_cols = ("id", "grade", "stream", "admission", "balance",
+                       "status", "waived")
         for col in columns:
             self.tree.heading(col, text=headings[col],
                                command=lambda c=col: self._on_sort_column(c))
-            self.tree.column(col, width=widths[col],
-                              anchor="center" if col in ("id", "grade", "stream", "balance", "waived") else "w")
-        self.tree.tag_configure("overdue", background=OVERDUE_BG)
-        self.tree.tag_configure("paid", background=PAID_BG)
-        self.tree.tag_configure("waived", background=WARNING)
+            anchor = "e" if col == "balance" else (
+                "center" if col in center_cols else "w")
+            self.tree.column(col, width=widths[col], anchor=anchor)
+
+        # Status badges: soft pastel rows with readable accent text.
+        self.tree.tag_configure("overdue", background=OVERDUE_BG,
+                                foreground=OVERDUE_FG)
+        self.tree.tag_configure("paid", background=PAID_BG,
+                                foreground=PAID_FG)
+        self.tree.tag_configure("waived", background=WAIVED_BG,
+                                foreground=WAIVED_FG)
+        self.tree.tag_configure("inactive", background=INACTIVE_BG,
+                                foreground=INACTIVE_FG)
         self.tree.tag_configure("odd", background=ZEBRA_ODD)
         self.tree.tag_configure("even", background=ZEBRA_EVEN)
         self.tree.pack(fill="both", expand=True)
 
-        summary = ttk.Frame(self)
+        summary = ttk.LabelFrame(self, text="Summary",
+                                 padding=(PAD_SM, PAD_XS))
         summary.pack(fill="x", pady=(PAD_SM, 0))
         self.summary_label = ttk.Label(summary, text="", font=FONT_BODY_ITALIC)
         self.summary_label.pack(side="left")
+        self.summary_label2 = ttk.Label(summary, text="", font=FONT_MUTED,
+                                        foreground=MUTED_FG)
+        self.summary_label2.pack(side="right")
 
     def refresh(self):
         grade = None if self.grade_filter.get() in ("", "All") else self.grade_filter.get()
@@ -105,9 +136,19 @@ class StudentsTab(ttk.Frame):
     def _apply_search_filter(self):
         search = self.search_var.get().strip().lower()
         if search:
-            filtered = [s for s in self._all_students
-                        if search in str(s["id"])
-                        or search in s["full_name"].lower()]
+            filtered = []
+            for s in self._all_students:
+                haystack = " ".join([
+                    str(s.get("id", "")),
+                    s.get("full_name", "") or "",
+                    s.get("admission_no", "") or "",
+                    s.get("grade", "") or "",
+                    s.get("stream", "") or "",
+                    s.get("status", "") or "",
+                    s.get("remarks", "") or "",
+                ]).lower()
+                if search in haystack:
+                    filtered.append(s)
         else:
             filtered = list(self._all_students)
 
@@ -115,24 +156,49 @@ class StudentsTab(ttk.Frame):
             self.tree.delete(row)
         total_balance = 0.0
         waived_count = 0
+        owing_count = 0
+        paid_count = 0
+        inactive_count = 0
         for idx, s in enumerate(filtered):
+            status = (s.get("status") or "Active").strip()
             is_waived = s.get("fee_waived", 0)
             if is_waived:
                 tag = "waived"
                 waived_count += 1
+            elif status and status != "Active":
+                tag = "inactive"
+                inactive_count += 1
+            elif s["balance"] > 0:
+                tag = "overdue"
+                owing_count += 1
             else:
-                tag = "overdue" if s["balance"] > 0 else "paid"
+                tag = "paid"
+                paid_count += 1
             row_tag = ("even",) if idx % 2 == 0 else ("odd",)
             self.tree.insert("", "end", values=(
-                s["id"], s["full_name"], s["grade"], dict(s).get("stream", "") or "-",
-                s["admission_no"] or "-", f"{s['balance']:,.2f}",
-                "Yes" if is_waived else "-", s["remarks"] or ""),
+                s["id"], s["full_name"], s["grade"],
+                dict(s).get("stream", "") or "—",
+                s["admission_no"] or "—", f"{s['balance']:,.2f}",
+                status, "Yes" if is_waived else "—",
+                s["remarks"] or ""),
                 tags=row_tag + (tag,))
             total_balance += s["balance"]
 
-        waived_text = f" | Waived: {waived_count}" if waived_count else ""
-        self.summary_label.config(
-            text=f"{len(filtered)} student(s)  |  Total outstanding: KES {total_balance:,.2f}{waived_text}")
+        counts = [
+            f"Showing {len(filtered)} of {len(self._all_students)}",
+            f"Outstanding: KES {total_balance:,.2f}",
+        ]
+        if owing_count:
+            counts.append(f"Owing: {owing_count}")
+        if paid_count:
+            counts.append(f"Paid-up: {paid_count}")
+        if waived_count:
+            counts.append(f"Waived: {waived_count}")
+        if inactive_count:
+            counts.append(f"Inactive: {inactive_count}")
+        self.summary_label.config(text="   •   ".join(counts))
+        self.summary_label2.config(
+            text="Sort by clicking column headings  •  Use Search to filter")
 
     def _on_sort_column(self, col):
         reverse = getattr(self.tree, "_sorted_reverse", False)
